@@ -1,0 +1,23 @@
+name: CI Lint Job
+description: Run linting and formatting checks.
+inputs:
+  python-version:
+    required: true
+    description: Python version used for uv environment.
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup-uv
+      with:
+        python-version: ${{ inputs.python-version }}
+        install-args: --group linting --frozen
+
+    - uses: ./.github/actions/assert-repo-clean
+
+    - name: Ruff Linting (check)
+      shell: bash
+      run: uv run ruff check . --output-format=github
+
+    - name: Ruff Formatting (check)
+      shell: bash
+      run: uv run ruff format --check . --output-format=github

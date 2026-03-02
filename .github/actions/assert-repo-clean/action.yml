@@ -1,0 +1,15 @@
+name: Assert repository is clean
+description: Fail if git status indicates changes.
+runs:
+  using: composite
+  steps:
+    - name: Assert repo is clean after install
+      shell: bash
+      run: |
+        if [[ -n "$(git status --porcelain)" ]]; then
+          echo "Repo became dirty during CI (e.g. uv.lock changed). Diff:"
+          git --no-pager diff
+          echo "Status:"
+          git status --porcelain
+          exit 1
+        fi

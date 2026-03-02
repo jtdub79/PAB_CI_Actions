@@ -1,0 +1,35 @@
+name: CI Security Job
+description: Run Bandit and pip-audit checks.
+inputs:
+  python-version:
+    description: Python version to use
+    required: false
+    default: "3.13"
+  safety-api-key:
+    description: Safety API key
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup-uv
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache-key-suffix: security
+        install-args: --group security --frozen
+
+    - uses: ./.github/actions/assert-repo-clean
+
+    - name: Run Bandit security scan (informational)
+      shell: bash
+      continue-on-error: true
+      run: uv run bandit -r src -q
+
+    - name: Run pip-audit vulnerability scan (strict)
+      shell: bash
+      run: uv run pip-audit
+
+    - name: Run Safety dependency scan
+      uses: pyupio/safety-action@v1
+      with:
+        api-key: ${{ inputs.safety-api-key }}
+        args: --detailed-output

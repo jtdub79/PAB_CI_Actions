@@ -1,0 +1,15 @@
+name: Release Package Job
+description: Upload packaged release artifacts.
+inputs:
+  artifact-name:
+    required: true
+  artifact-path:
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Upload artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.artifact-path }}
