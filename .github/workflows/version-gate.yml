@@ -30,4 +30,4 @@ jobs:
           python-version: ${{ inputs.python-version }}
 
       - name: Run version gate
-        run: python dev-tools/version_gate.py ${{ inputs.tag-or-pr }}
+        run: python jtdub79/PAB_CI_Actions/dev-tools/version_gate.py ${{ inputs.tag-or-pr }}
