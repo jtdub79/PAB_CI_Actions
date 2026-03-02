@@ -11,13 +11,13 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: ./.github/actions/setup-uv
+    - uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv
       with:
         python-version: ${{ inputs.python-version }}
         cache-key-suffix: security
         install-args: --group security --frozen
 
-    - uses: ./.github/actions/assert-repo-clean
+    - uses: jtdub79/PAB_CI_Actions/.github/actions/assert-repo-clean
 
     - name: Run Bandit security scan (informational)
       shell: bash
