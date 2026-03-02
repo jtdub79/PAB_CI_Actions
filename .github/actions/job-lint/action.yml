@@ -7,12 +7,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv
+    - uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v1
       with:
         python-version: ${{ inputs.python-version }}
         install-args: --group linting --frozen
 
-    - uses: jtdub79/PAB_CI_Actions/.github/actions/assert-repo-clean
+    - uses: jtdub79/PAB_CI_Actions/.github/actions/assert-repo-clean@v1
 
     - name: Ruff Linting (check)
       shell: bash
