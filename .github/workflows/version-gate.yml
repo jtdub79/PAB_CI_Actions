@@ -23,8 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          repository: jtdub79/PAB_CI_Actions
-          ref: v1
           path: PAB_CI_Actions
           fetch-depth: 0
 
