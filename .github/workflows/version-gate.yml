@@ -21,8 +21,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout reusable workflow repository
+        uses: actions/checkout@v6
         with:
+          repository: jtdub79/PAB_CI_Actions
+          ref: ${{ github.workflow_sha }}
           path: PAB_CI_Actions
           fetch-depth: 0
 
