@@ -23,6 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          repository: jtdub79/PAB_CI_Actions
+          ref: v1
+          path: PAB_CI_Actions
           fetch-depth: 0
 
       - uses: actions/setup-python@v6
@@ -30,4 +33,4 @@ jobs:
           python-version: ${{ inputs.python-version }}
 
       - name: Run version gate
-        run: python jtdub79/PAB_CI_Actions/dev-tools/version_gate.py ${{ inputs.tag-or-pr }}
+        run: python PAB_CI_Actions/dev-tools/version_gate.py ${{ inputs.tag-or-pr }}
