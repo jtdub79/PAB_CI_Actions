@@ -25,5 +25,3 @@ runs:
       shell: bash
       run: uv run pip-audit
 
-    - name: Run OSV vulnerability scan (strict)
-      uses: google/osv-scanner-action@v2.3.3

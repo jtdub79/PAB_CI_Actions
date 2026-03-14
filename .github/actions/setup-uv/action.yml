@@ -1,4 +1,4 @@
-aname: Setup uv environment
+name: Setup uv environment
 description: Set up uv, cache, create venv, and optionally install dependency groups.
 inputs:
   python-version:
