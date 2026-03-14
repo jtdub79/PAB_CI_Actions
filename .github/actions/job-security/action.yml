@@ -1,9 +1,5 @@
 name: CI Security Job
 description: Run Bandit and pip-audit checks.
-permissions:
-  actions: read
-  security-events: write
-  contents: read
 inputs:
   python-version:
     description: Python version to use
