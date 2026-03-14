@@ -1,13 +1,14 @@
 name: CI Security Job
 description: Run Bandit and pip-audit checks.
+permissions:
+  actions: read
+  security-events: write
+  contents: read
 inputs:
   python-version:
     description: Python version to use
     required: false
     default: "3.13"
-  safety-api-key:
-    description: Safety API key
-    required: true
 runs:
   using: composite
   steps:
@@ -28,8 +29,5 @@ runs:
       shell: bash
       run: uv run pip-audit
 
-    - name: Run Safety dependency scan
-      uses: pyupio/safety-action@v1
-      with:
-        api-key: ${{ inputs.safety-api-key }}
-        args: --detailed-output
+    - name: Run OSV vulnerability scan (strict)
+      uses: google/osv-scanner-action@v2.3.3
