@@ -8,6 +8,10 @@ inputs:
     description: Run import linter
     required: false
     default: "true"
+  has-import-health-script:
+    description: Run import health script dev-tools/check_import_health.py
+    required: false
+    default: "true"
 runs:
   using: composite
   steps:
@@ -30,3 +34,8 @@ runs:
       if: ${{ inputs.run-import-linter == 'true' }}
       shell: bash
       run: uv run import-linter lint
+
+    - name: Import Health Checks
+      if: ${{ inputs.has-import-health-script == 'true' }}
+      shell: bash
+      run: uv run python dev-tools/check_import_health.py
