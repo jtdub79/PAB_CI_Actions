@@ -8,13 +8,13 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v1
+    - uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v2
       with:
         python-version: ${{ inputs.python-version }}
         cache-key-suffix: security
         install-args: --group security --frozen
 
-    - uses: jtdub79/PAB_CI_Actions/.github/actions/assert-repo-clean@v1
+    - uses: jtdub79/PAB_CI_Actions/.github/actions/assert-repo-clean@v2
 
     - name: Run Bandit security scan (informational)
       shell: bash
