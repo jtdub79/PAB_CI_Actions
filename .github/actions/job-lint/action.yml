@@ -18,24 +18,24 @@ runs:
     - uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v2
       with:
         python-version: ${{ inputs.python-version }}
-        install-args: --group linting --frozen
+        install-args: --no-sources --locked --group linting
 
     - uses: jtdub79/PAB_CI_Actions/.github/actions/assert-repo-clean@v2
 
     - name: Ruff Linting (check)
       shell: bash
-      run: uv run ruff check . --output-format=github
+      run: uv run --frozen --no-sync ruff check . --output-format=github
 
     - name: Ruff Formatting (check)
       shell: bash
-      run: uv run ruff format --check . --output-format=github
+      run: uv run --frozen --no-sync ruff format --check . --output-format=github
 
     - name: Import Linter
       if: ${{ inputs.run-import-linter == 'true' }}
       shell: bash
-      run: uv run import-linter lint
+      run: uv run --frozen --no-sync import-linter lint
 
     - name: Import Health Checks
       if: ${{ inputs.has-import-health-script == 'true' }}
       shell: bash
-      run: uv run python dev-tools/check_import_health.py
+      run: python dev-tools/check_import_health.py

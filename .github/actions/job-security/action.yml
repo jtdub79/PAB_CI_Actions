@@ -12,16 +12,16 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
         cache-key-suffix: security
-        install-args: --group security --frozen
+        install-args: --no-sources --locked --group security
 
     - uses: jtdub79/PAB_CI_Actions/.github/actions/assert-repo-clean@v2
 
     - name: Run Bandit security scan (informational)
       shell: bash
       continue-on-error: true
-      run: uv run bandit -r src -q
+      run: uv run --frozen --no-sync bandit -r src -q
 
     - name: Run pip-audit vulnerability scan (strict)
       shell: bash
-      run: uv run pip-audit
+      run: uv run --frozen --no-sync pip-audit
 

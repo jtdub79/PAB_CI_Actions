@@ -11,7 +11,7 @@ inputs:
   install-args:
     description: Arguments passed to `uv sync`.
     required: false
-    default: ""
+    default: --no-sources --locked
 runs:
   using: composite
   steps:
