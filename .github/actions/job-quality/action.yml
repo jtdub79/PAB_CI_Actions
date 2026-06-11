@@ -30,6 +30,10 @@ runs:
       shell: bash
       run: uv run --frozen --no-sync ruff format --check . --output-format=github
 
+    - name: Type Checking (mypy)
+      shell: bash
+      run: uv run --frozen --no-sync mypy .
+
     - name: Import Linter
       if: ${{ inputs.run-import-linter == 'true' }}
       shell: bash
