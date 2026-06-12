@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import cast
 
 
 def fail(msg: str, code: int = 1) -> None:
@@ -31,14 +32,28 @@ def safe_segment(value: str, name: str) -> str:
     return urllib.parse.quote(value, safe="")
 
 
+def required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        fail(f"{name} is required", 2)
+    return cast(str, value)
+
+
+def reject_credential_cli_args(argv: list[str]) -> None:
+    removed_args = {"--admin-" + "username", "--admin-" + "password"}
+    for arg in argv:
+        option = arg.split("=", 1)[0]
+        if option in removed_args:
+            fail(f"{option} is not supported; use the matching environment variable", 2)
+
+
 def main() -> None:
+    reject_credential_cli_args(sys.argv[1:])
     p = argparse.ArgumentParser()
     p.add_argument("--server-base-url", required=True)
     p.add_argument("--platform", required=True)
     p.add_argument("--channel", required=True)
     p.add_argument("--request-json-file", required=True)
-    p.add_argument("--admin-username", required=True)
-    p.add_argument("--admin-password", required=True)
     p.add_argument("--retry-count", type=int, default=3)
     p.add_argument("--retry-delay", type=float, default=2.0)
     args = p.parse_args()
@@ -46,7 +61,7 @@ def main() -> None:
     if not req_path.is_file():
         fail("request-json-file must exist", 2)
     try:
-        payload_obj = json.loads(req_path.read_text(encoding="utf-8"))
+        payload_obj = json.loads(req_path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as exc:
         fail(f"request-json-file is not valid JSON: {exc}", 2)
     payload = json.dumps(payload_obj, separators=(",", ":")).encode("utf-8")
@@ -56,7 +71,9 @@ def main() -> None:
         fail("server-base-url must be an http(s) URL", 2)
     path = f"/api/v1/admin/desktop/releases/{safe_segment(args.platform, 'platform')}/{safe_segment(args.channel, 'channel')}"
     url = base + path
-    token = base64.b64encode(f"{args.admin_username}:{args.admin_password}".encode()).decode()
+    admin_username = required_env("PAB_SERVER_ADMIN_USER")
+    admin_password = required_env("PAB_SERVER_ADMIN_PASSWORD")
+    token = base64.b64encode(f"{admin_username}:{admin_password}".encode()).decode()
     headers = {"Authorization": f"Basic {token}", "Content-Type": "application/json", "Accept": "application/json"}
     response_file = (
         pathlib.Path(os.environ.get("RUNNER_TEMP", ".")) / f"pab-release-metadata-response-{os.getpid()}.txt"

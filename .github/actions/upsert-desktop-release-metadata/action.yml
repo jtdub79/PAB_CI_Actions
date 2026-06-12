@@ -51,8 +51,8 @@ runs:
         PLATFORM: ${{ inputs.platform }}
         CHANNEL: ${{ inputs.channel }}
         REQUEST_JSON_FILE: ${{ inputs.request-json-file }}
-        ADMIN_USERNAME: ${{ inputs.admin-username }}
-        ADMIN_PASSWORD: ${{ inputs.admin-password }}
+        PAB_SERVER_ADMIN_USER: ${{ inputs.admin-username }}
+        PAB_SERVER_ADMIN_PASSWORD: ${{ inputs.admin-password }}
         RETRY_COUNT: ${{ inputs.retry-count }}
         RETRY_DELAY: ${{ inputs.retry-delay }}
       run: |
@@ -62,7 +62,5 @@ runs:
           --platform "${PLATFORM}" \
           --channel "${CHANNEL}" \
           --request-json-file "${REQUEST_JSON_FILE}" \
-          --admin-username "${ADMIN_USERNAME}" \
-          --admin-password "${ADMIN_PASSWORD}" \
           --retry-count "${RETRY_COUNT}" \
           --retry-delay "${RETRY_DELAY}"
