@@ -124,14 +124,54 @@ def job_security_step_script(step_name):
     raise AssertionError(f"job-security step not found: {step_name}")
 
 
+def bash_candidates():
+    candidates = []
+    path_bash = shutil.which("bash")
+    if path_bash:
+        candidates.append(pathlib.Path(path_bash))
+    if os.name == "nt":
+        candidates.extend(
+            [
+                pathlib.Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "bin" / "bash.exe",
+                pathlib.Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "usr" / "bin" / "bash.exe",
+                pathlib.Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
+                / "Git"
+                / "bin"
+                / "bash.exe",
+            ]
+        )
+    return candidates
+
+
 def working_bash():
-    bash = shutil.which("bash")
-    if not bash:
-        pytest.skip("bash is required to execute composite action shell snippets")
-    probe = subprocess.run([bash, "-c", "true"], text=True, capture_output=True)
-    if probe.returncode != 0:
-        pytest.skip(f"bash is unavailable or not runnable in this environment: {probe.stderr}")
-    return bash
+    attempted = []
+    for bash in bash_candidates():
+        bash_text = str(bash)
+        if bash_text in attempted:
+            continue
+        attempted.append(bash_text)
+        if not bash.exists():
+            continue
+        probe = subprocess.run([bash_text, "-c", "true"], text=True, capture_output=True)
+        if probe.returncode == 0:
+            return bash_text
+    pytest.skip(f"bash is required to execute composite action shell snippets; attempted: {attempted}")
+
+
+def prepend_path(env, path):
+    existing = env.get("PATH") or env.get("Path") or ""
+    env["PATH"] = f"{path}{os.pathsep}{existing}" if existing else str(path)
+    return env
+
+
+def read_captured_args(path):
+    raw = path.read_bytes()
+    if not raw:
+        return []
+    parts = raw.split(b"\0")
+    if parts[-1] == b"":
+        parts.pop()
+    return [part.decode("utf-8") for part in parts]
 
 
 def fake_uv_dir(tmp_path, *, exit_status=0):
@@ -139,19 +179,24 @@ def fake_uv_dir(tmp_path, *, exit_status=0):
     bindir.mkdir()
     script = bindir / "uv"
     script.write_text(
-        "#!/usr/bin/env python3\n"
-        "import json, os, pathlib, sys\n"
-        "path = pathlib.Path(os.environ['UV_CAPTURE'])\n"
-        "path.write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n"
-        "raise SystemExit(int(os.environ.get('UV_EXIT_STATUS', '0')))\n",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        ': "${UV_CAPTURE:=uv-args.bin}"\n'
+        ': > "${UV_CAPTURE}"\n'
+        'for arg in "$@"; do\n'
+        '  printf \'%s\\0\' "${arg}" >> "${UV_CAPTURE}"\n'
+        "done\n"
+        'exit "${UV_EXIT_STATUS:-0}"\n',
         encoding="utf-8",
     )
     script.chmod(0o755)
-    capture = tmp_path / "uv-args.json"
-    env = subprocess_env(
-        PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}",
-        UV_CAPTURE=str(capture),
-        UV_EXIT_STATUS=str(exit_status),
+    capture = tmp_path / "uv-args.bin"
+    env = prepend_path(
+        subprocess_env(
+            UV_CAPTURE="uv-args.bin",
+            UV_EXIT_STATUS=str(exit_status),
+        ),
+        bindir,
     )
     return bindir, capture, env
 
@@ -172,8 +217,25 @@ def run_bandit_scan(tmp_path, *, targets="src", bandit_args="", blocking="true",
         capture_output=True,
         env=env,
     )
-    captured_args = json.loads(capture.read_text(encoding="utf-8")) if capture.exists() else None
+    captured_args = read_captured_args(capture) if capture.exists() else None
     return result, captured_args
+
+
+def test_security_action_fake_uv_does_not_require_python3_command(tmp_path):
+    bindir, capture, env = fake_uv_dir(tmp_path)
+    script_text = (bindir / "uv").read_text(encoding="utf-8")
+    assert "#!/usr/bin/env python3" not in script_text
+    assert "python3" not in script_text
+
+    result = subprocess.run(
+        [working_bash(), "-c", "uv run --frozen --no-sync bandit -r src -q -lll"],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert read_captured_args(capture) == ["run", "--frozen", "--no-sync", "bandit", "-r", "src", "-q", "-lll"]
 
 
 def test_security_action_bandit_args_default_empty_and_command_is_safe():
