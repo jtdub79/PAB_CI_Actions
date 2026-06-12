@@ -4,20 +4,29 @@
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import hashlib
-import hmac
 import json
 import os
 import pathlib
 import re
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
-from dataclasses import dataclass
+from typing import Any, Protocol
 
 SAFE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._~!$&'()*+,;=:@/ -]*$")
+RESERVED_METADATA_KEYS = {"sha256"}
+CONCURRENT_EXISTS_STATUSES = {409, 412}
+
+
+class S3Client(Protocol):
+    def head_object(self, **kwargs: Any) -> dict[str, Any]: ...
+
+    def put_object(self, **kwargs: Any) -> dict[str, Any]: ...
+
+
+class FakeClientError(Exception):
+    def __init__(self, status: int, code: str) -> None:
+        self.response = {"ResponseMetadata": {"HTTPStatusCode": status}, "Error": {"Code": code}}
+        super().__init__(f"S3 request failed with HTTP {status}")
 
 
 def fail(message: str, code: int = 1) -> None:
@@ -49,6 +58,16 @@ def validate_key(key: str) -> None:
         fail("object-key contains unsupported characters")
 
 
+def validate_credentials() -> tuple[str, str]:
+    access_key_id = os.environ.get("AWS_ACCESS_KEY_ID", "")
+    secret_access_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+    if not access_key_id:
+        fail("AWS_ACCESS_KEY_ID is required for R2 uploads", 2)
+    if not secret_access_key:
+        fail("AWS_SECRET_ACCESS_KEY is required for R2 uploads", 2)
+    return access_key_id, secret_access_key
+
+
 def parse_metadata(raw: str) -> dict[str, str]:
     if not raw:
         return {}
@@ -60,100 +79,176 @@ def parse_metadata(raw: str) -> dict[str, str]:
         fail("custom-metadata must be a JSON object")
     metadata: dict[str, str] = {}
     for key, value in data.items():
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", str(key)):
-            fail(f"custom metadata key is invalid: {key}")
-        metadata[str(key).lower()] = str(value)
+        key_text = str(key)
+        normalized_key = key_text.lower()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", key_text):
+            fail(f"custom metadata key is invalid: {key_text}")
+        if normalized_key in RESERVED_METADATA_KEYS:
+            fail("custom metadata key 'sha256' is reserved for the computed object digest")
+        metadata[normalized_key] = str(value)
     return metadata
 
 
-def mock_mode(args: argparse.Namespace, digest: str, size: int, metadata: dict[str, str]) -> None:
-    state_path = os.environ.get("PAB_CI_ACTIONS_R2_MOCK_STATE")
-    if not state_path:
-        return
-    state_file = pathlib.Path(state_path)
-    state = json.loads(state_file.read_text(encoding="utf-8")) if state_file.exists() else {}
-    bucket = state.setdefault(args.bucket, {})
-    existing = bucket.get(args.object_key)
-    if existing:
-        if existing.get("sha256") == digest and int(existing.get("size", -1)) == size:
-            action = "exists"
-        else:
-            fail("immutable object already exists with different bytes or SHA-256")
-    else:
-        bucket[args.object_key] = {
-            "sha256": digest,
-            "size": size,
-            "content_type": args.content_type,
-            "cache_control": args.cache_control,
-            "metadata": {**metadata, "sha256": digest},
-            "endpoint": f"https://{args.account_id}.r2.cloudflarestorage.com",
-        }
-        action = "uploaded"
-    state_file.parent.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
-    output("object-key", args.object_key)
-    output("sha256", digest)
-    output("size", str(size))
-    output("action", action)
-    print(f"R2 mock {action}: bucket={args.bucket} key={args.object_key} size={size}")
-    raise SystemExit(0)
+def error_status(exc: BaseException) -> int | None:
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if isinstance(status, int):
+            return status
+    return None
 
 
-@dataclass
-class Response:
-    status: int
-    headers: dict[str, str]
-    body: bytes
+def error_code(exc: BaseException) -> str:
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        code = response.get("Error", {}).get("Code", "")
+        return str(code)
+    return ""
 
 
-def sign_key(secret: str, date: str, region: str, service: str) -> bytes:
-    k_date = hmac.new(("AWS4" + secret).encode(), date.encode(), hashlib.sha256).digest()
-    k_region = hmac.new(k_date, region.encode(), hashlib.sha256).digest()
-    k_service = hmac.new(k_region, service.encode(), hashlib.sha256).digest()
-    return hmac.new(k_service, b"aws4_request", hashlib.sha256).digest()
+def is_not_found(exc: BaseException) -> bool:
+    return error_status(exc) == 404 or error_code(exc) in {"404", "NoSuchKey", "NotFound"}
 
 
-def request(
-    method: str, args: argparse.Namespace, payload: bytes = b"", extra_headers: dict[str, str] | None = None
-) -> Response:
-    endpoint = f"https://{args.account_id}.r2.cloudflarestorage.com"
-    encoded_key = "/".join(urllib.parse.quote(part, safe="") for part in args.object_key.split("/"))
-    url = f"{endpoint}/{args.bucket}/{encoded_key}"
-    now = dt.datetime.now(dt.UTC)
-    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
-    date_stamp = now.strftime("%Y%m%d")
-    payload_hash = hashlib.sha256(payload).hexdigest()
-    host = urllib.parse.urlparse(endpoint).netloc
-    headers = {
-        "host": host,
-        "x-amz-content-sha256": payload_hash,
-        "x-amz-date": amz_date,
-    }
-    if extra_headers:
-        headers.update({k.lower(): v for k, v in extra_headers.items() if v != ""})
-    signed_names = ";".join(sorted(headers))
-    canonical_headers = "".join(f"{k}:{' '.join(str(headers[k]).strip().split())}\n" for k in sorted(headers))
-    canonical_uri = f"/{urllib.parse.quote(args.bucket, safe='')}/{encoded_key}"
-    canonical_request = "\n".join([method, canonical_uri, "", canonical_headers, signed_names, payload_hash])
-    scope = f"{date_stamp}/auto/s3/aws4_request"
-    string_to_sign = "\n".join(
-        ["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(canonical_request.encode()).hexdigest()]
-    )
-    signature = hmac.new(
-        sign_key(args.secret_access_key, date_stamp, "auto", "s3"), string_to_sign.encode(), hashlib.sha256
-    ).hexdigest()
-    headers["authorization"] = (
-        f"AWS4-HMAC-SHA256 Credential={args.access_key_id}/{scope}, SignedHeaders={signed_names}, Signature={signature}"
-    )
-    req = urllib.request.Request(url, data=payload if method != "HEAD" else None, method=method, headers=headers)
+def is_concurrent_exists(exc: BaseException) -> bool:
+    return error_status(exc) in CONCURRENT_EXISTS_STATUSES
+
+
+def head_object(client: S3Client, bucket: str, key: str) -> dict[str, Any] | None:
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310
-            return Response(resp.status, dict(resp.headers), resp.read())
-    except urllib.error.HTTPError as exc:
-        return Response(exc.code, dict(exc.headers), exc.read(4096))
+        return client.head_object(Bucket=bucket, Key=key)
+    except Exception as exc:
+        if is_not_found(exc):
+            return None
+        raise
 
 
-def main() -> None:
+def remote_matches(head: dict[str, Any], digest: str, size: int) -> bool:
+    metadata = {str(key).lower(): str(value) for key, value in dict(head.get("Metadata") or {}).items()}
+    content_length = int(head.get("ContentLength", -1))
+    return metadata.get("sha256", "").lower() == digest.lower() and content_length == size
+
+
+def immutable_conflict() -> None:
+    fail("immutable object already exists with different bytes or SHA-256")
+
+
+def build_client(account_id: str, access_key_id: str, secret_access_key: str) -> S3Client:
+    try:
+        import botocore.session
+        from botocore.config import Config
+    except ImportError:
+        fail("botocore is required for live R2 uploads; install botocore before running this helper", 2)
+
+    endpoint = f"https://{account_id}.r2.cloudflarestorage.com"
+    session = botocore.session.get_session()
+    return session.create_client(
+        "s3",
+        endpoint_url=endpoint,
+        region_name="auto",
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key,
+        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+    )
+
+
+class StateS3Client:
+    def __init__(self, state_file: pathlib.Path, endpoint: str) -> None:
+        self.state_file = state_file
+        self.endpoint = endpoint
+
+    def _read(self) -> dict[str, Any]:
+        return json.loads(self.state_file.read_text(encoding="utf-8")) if self.state_file.exists() else {}
+
+    def _write(self, state: dict[str, Any]) -> None:
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        self.state_file.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+    def head_object(self, **kwargs: Any) -> dict[str, Any]:
+        state = self._read()
+        bucket = state.get(kwargs["Bucket"], {})
+        existing = bucket.get(kwargs["Key"])
+        if not existing:
+            raise FakeClientError(404, "NoSuchKey")
+        return {"Metadata": dict(existing.get("metadata") or {}), "ContentLength": int(existing.get("size", -1))}
+
+    def put_object(self, **kwargs: Any) -> dict[str, Any]:
+        state = self._read()
+        bucket = state.setdefault(kwargs["Bucket"], {})
+        key = kwargs["Key"]
+        if kwargs.get("IfNoneMatch") == "*" and key in bucket:
+            status = int(os.environ.get("PAB_CI_ACTIONS_R2_MOCK_CONDITIONAL_STATUS", "412"))
+            raise FakeClientError(status, "PreconditionFailed" if status == 412 else "ConditionalRequestConflict")
+        body = kwargs["Body"]
+        payload = body.read() if hasattr(body, "read") else bytes(body)
+        bucket[key] = {
+            "sha256": dict(kwargs.get("Metadata") or {}).get("sha256", ""),
+            "size": len(payload),
+            "content_type": kwargs.get("ContentType", ""),
+            "cache_control": kwargs.get("CacheControl", ""),
+            "content_disposition": kwargs.get("ContentDisposition", ""),
+            "metadata": dict(kwargs.get("Metadata") or {}),
+            "endpoint": self.endpoint,
+        }
+        self._write(state)
+        return {"ResponseMetadata": {"HTTPStatusCode": 200}}
+
+
+def make_metadata(custom_metadata: dict[str, str], digest: str) -> dict[str, str]:
+    metadata = dict(custom_metadata)
+    metadata["sha256"] = digest
+    return metadata
+
+
+def put_new_object(
+    client: S3Client,
+    args: argparse.Namespace,
+    file_path: pathlib.Path,
+    metadata: dict[str, str],
+) -> None:
+    put_kwargs: dict[str, Any] = {
+        "Bucket": args.bucket,
+        "Key": args.object_key,
+        "Body": None,
+        "ContentType": args.content_type,
+        "CacheControl": args.cache_control,
+        "Metadata": metadata,
+        "IfNoneMatch": "*",
+    }
+    if args.content_disposition:
+        put_kwargs["ContentDisposition"] = args.content_disposition
+    with file_path.open("rb") as body:
+        put_kwargs["Body"] = body
+        client.put_object(**put_kwargs)
+
+
+def upload_or_verify(
+    client: S3Client, args: argparse.Namespace, file_path: pathlib.Path, digest: str, size: int
+) -> str:
+    metadata = make_metadata(parse_metadata(args.custom_metadata), digest)
+    existing = head_object(client, args.bucket, args.object_key)
+    if existing is not None:
+        if remote_matches(existing, digest, size):
+            return "exists"
+        immutable_conflict()
+
+    try:
+        put_new_object(client, args, file_path, metadata)
+        return "uploaded"
+    except Exception as exc:
+        if not is_concurrent_exists(exc):
+            status = error_status(exc)
+            if status is None:
+                fail("R2 conditional upload failed")
+            fail(f"R2 conditional upload failed with HTTP {status}")
+        concurrent = head_object(client, args.bucket, args.object_key)
+        if concurrent is not None and remote_matches(concurrent, digest, size):
+            return "exists"
+        immutable_conflict()
+    raise AssertionError("unreachable")
+
+
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--account-id", required=True)
     parser.add_argument("--bucket", required=True)
@@ -164,10 +259,12 @@ def main() -> None:
     parser.add_argument("--content-disposition", default="")
     parser.add_argument("--expected-sha256", default="")
     parser.add_argument("--custom-metadata", default="")
-    parser.add_argument("--access-key-id", required=True)
-    parser.add_argument("--secret-access-key", required=True)
-    args = parser.parse_args()
+    return parser.parse_args()
 
+
+def main() -> None:
+    args = parse_args()
+    access_key_id, secret_access_key = validate_credentials()
     validate_key(args.object_key)
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", args.bucket):
         fail("bucket contains unsupported characters")
@@ -178,33 +275,14 @@ def main() -> None:
     if args.expected_sha256 and args.expected_sha256.lower() != digest:
         fail("local file SHA-256 does not match expected-sha256")
     size = file_path.stat().st_size
-    metadata = parse_metadata(args.custom_metadata)
-    mock_mode(args, digest, size, metadata)
-
-    head = request("HEAD", args)
-    if head.status == 200:
-        remote_sha = head.headers.get("x-amz-meta-sha256", "").lower()
-        remote_size = int(head.headers.get("Content-Length", "-1"))
-        if remote_sha == digest and remote_size == size:
-            action = "exists"
-        else:
-            fail("immutable object already exists with different bytes or SHA-256")
-    elif head.status == 404:
-        headers = {
-            "content-type": args.content_type,
-            "cache-control": args.cache_control,
-            "x-amz-meta-sha256": digest,
-        }
-        if args.content_disposition:
-            headers["content-disposition"] = args.content_disposition
-        for key, value in metadata.items():
-            headers[f"x-amz-meta-{key}"] = value
-        put = request("PUT", args, file_path.read_bytes(), headers)
-        if put.status not in (200, 201, 204):
-            fail(f"R2 upload failed with HTTP {put.status}")
-        action = "uploaded"
-    else:
-        fail(f"R2 existence check failed with HTTP {head.status}")
+    endpoint = f"https://{args.account_id}.r2.cloudflarestorage.com"
+    state_path = os.environ.get("PAB_CI_ACTIONS_R2_MOCK_STATE")
+    client = (
+        StateS3Client(pathlib.Path(state_path), endpoint)
+        if state_path
+        else build_client(args.account_id, access_key_id, secret_access_key)
+    )
+    action = upload_or_verify(client, args, file_path, digest, size)
 
     output("object-key", args.object_key)
     output("sha256", digest)

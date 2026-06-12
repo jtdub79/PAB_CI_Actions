@@ -59,7 +59,7 @@ Caching uses `astral-sh/setup-uv` built-in cache support instead of a separate b
 
 ## R2 upload usage
 
-The R2 upload action targets `https://<account-id>.r2.cloudflarestorage.com` with S3 region `auto`. It validates the file, computes SHA-256, checks object existence, uploads only when absent, treats matching existing SHA-256 and size as idempotent success, and fails rather than overwriting a different immutable object. It returns non-secret `object-key`, `sha256`, `size`, and `action` outputs.
+The R2 upload action targets `https://<account-id>.r2.cloudflarestorage.com` with S3 region `auto`. It maps the public `r2-access-key-id` and `r2-secret-access-key` inputs to `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables internally, never command-line arguments. It validates the file, computes SHA-256, reserves the custom metadata key `sha256` for trusted computed digest metadata, and uses conditional `If-None-Match: *` object creation so it never overwrites an immutable object. Existing objects with matching SHA-256 metadata and size are idempotent success; conflicting existing objects fail. It returns non-secret `object-key`, `sha256`, `size`, and `action` outputs. Self-tests use local fakes and require no real R2 credentials. Live uploads use a pinned `botocore` client instead of a custom SigV4 signer.
 
 ```yaml
 - id: upload-installer
