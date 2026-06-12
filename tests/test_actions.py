@@ -6,6 +6,7 @@ import http.server
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import threading
@@ -123,6 +124,16 @@ def job_security_step_script(step_name):
     raise AssertionError(f"job-security step not found: {step_name}")
 
 
+def working_bash():
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("bash is required to execute composite action shell snippets")
+    probe = subprocess.run([bash, "-c", "true"], text=True, capture_output=True)
+    if probe.returncode != 0:
+        pytest.skip(f"bash is unavailable or not runnable in this environment: {probe.stderr}")
+    return bash
+
+
 def fake_uv_dir(tmp_path, *, exit_status=0):
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -148,14 +159,14 @@ def fake_uv_dir(tmp_path, *, exit_status=0):
 def run_job_security_step(tmp_path, step_name, **env_overrides):
     script = job_security_step_script(step_name)
     env = subprocess_env(**env_overrides)
-    return subprocess.run(["bash", "-c", script], cwd=tmp_path, text=True, capture_output=True, env=env)
+    return subprocess.run([working_bash(), "-c", script], cwd=tmp_path, text=True, capture_output=True, env=env)
 
 
 def run_bandit_scan(tmp_path, *, targets="src", bandit_args="", blocking="true", exit_status=0):
     _bindir, capture, env = fake_uv_dir(tmp_path, exit_status=exit_status)
     env.update(BANDIT_TARGETS=targets, BANDIT_ARGS=bandit_args, BANDIT_BLOCKING=blocking)
     result = subprocess.run(
-        ["bash", "-c", job_security_step_script("Bandit security scan")],
+        [working_bash(), "-c", job_security_step_script("Bandit security scan")],
         cwd=tmp_path,
         text=True,
         capture_output=True,
