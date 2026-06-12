@@ -16,8 +16,29 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 ACTIONS = ROOT / ".github" / "actions"
 
 
+GITHUB_COMMAND_FILE_VARS = {"GITHUB_OUTPUT", "GITHUB_ENV", "GITHUB_PATH", "GITHUB_STEP_SUMMARY"}
+
+
+def subprocess_env(**overrides):
+    env = dict(os.environ)
+    for name in GITHUB_COMMAND_FILE_VARS:
+        env.pop(name, None)
+    env.update(overrides)
+    return env
+
+
 def run(args, **kwargs):
+    kwargs.setdefault("env", subprocess_env())
     return subprocess.run(args, cwd=ROOT, text=True, capture_output=True, **kwargs)
+
+
+def github_output_records(path):
+    records = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        name, separator, value = line.partition("=")
+        assert separator, f"invalid GitHub output record: {line!r}"
+        records[name] = value
+    return records
 
 
 def test_action_metadata_parse_and_required_inputs():
@@ -129,13 +150,29 @@ def r2_script_args(file_path, object_key="releases/app.bin", custom_metadata="",
 
 
 def r2_env(state, **overrides):
-    env = os.environ | {
-        "PAB_CI_ACTIONS_R2_MOCK_STATE": str(state),
-        "AWS_ACCESS_KEY_ID": "credential-one-for-tests",
-        "AWS_SECRET_ACCESS_KEY": "credential-two-for-tests",
-    }
+    env = subprocess_env(
+        PAB_CI_ACTIONS_R2_MOCK_STATE=str(state),
+        AWS_ACCESS_KEY_ID="credential-one-for-tests",
+        AWS_SECRET_ACCESS_KEY="credential-two-for-tests",
+    )
     env.update(overrides)
     return env
+
+
+def test_r2_output_supports_stdout_and_github_output_file(tmp_path, monkeypatch, capsys):
+    module = load_r2_module()
+
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    module.output("action", "uploaded")
+    captured = capsys.readouterr()
+    assert captured.out == "action=uploaded\n"
+
+    output_file = tmp_path / "github-output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_file))
+    module.output("action", "uploaded")
+    captured = capsys.readouterr()
+    assert "action=uploaded" not in captured.out
+    assert github_output_records(output_file) == {"action": "uploaded"}
 
 
 def test_r2_credentials_are_environment_only():
@@ -168,20 +205,38 @@ def test_r2_missing_credentials_fail_safely(tmp_path):
 
 def test_r2_absent_object_uploads_and_existing_same_bytes_returns_exists(tmp_path):
     f = tmp_path / "artifact.bin"
-    f.write_bytes(b"artifact")
+    payload = b"artifact"
+    f.write_bytes(payload)
+    expected_digest = hashlib.sha256(payload).hexdigest()
     state = tmp_path / "state.json"
+    first_output = tmp_path / "first-github-output.txt"
     first = run(
         r2_script_args(f, content_disposition='attachment; filename="app.bin"', custom_metadata='{"release":"v1"}'),
-        env=r2_env(state),
+        env=r2_env(state, GITHUB_OUTPUT=str(first_output)),
     )
     assert first.returncode == 0, first.stderr
-    assert "action=uploaded" in first.stdout
+    assert "R2 uploaded:" in first.stdout
+    assert github_output_records(first_output) == {
+        "object-key": "releases/app.bin",
+        "sha256": expected_digest,
+        "size": str(len(payload)),
+        "action": "uploaded",
+    }
+
+    second_output = tmp_path / "second-github-output.txt"
     second = run(
         r2_script_args(f, content_disposition='attachment; filename="app.bin"', custom_metadata='{"release":"v1"}'),
-        env=r2_env(state),
+        env=r2_env(state, GITHUB_OUTPUT=str(second_output)),
     )
     assert second.returncode == 0, second.stderr
-    assert "action=exists" in second.stdout
+    assert "R2 exists:" in second.stdout
+    assert github_output_records(second_output) == {
+        "object-key": "releases/app.bin",
+        "sha256": expected_digest,
+        "size": str(len(payload)),
+        "action": "exists",
+    }
+
     data = json.loads(state.read_text())
     stored = data["bucket"]["releases/app.bin"]
     assert stored["endpoint"] == "https://acct123.r2.cloudflarestorage.com"
