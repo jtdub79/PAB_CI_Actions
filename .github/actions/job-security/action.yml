@@ -16,6 +16,10 @@ inputs:
     description: Set true to fail the action on Bandit findings.
     required: false
     default: "false"
+  bandit-args:
+    description: Additional arguments passed to Bandit after the recursive targets.
+    required: false
+    default: ""
   pip-audit-command:
     description: pip-audit command. Blocking by default.
     required: false
@@ -81,7 +85,12 @@ runs:
           echo "::error::bandit-targets is required and must name at least one path."
           exit 2
         fi
-        for path in ${BANDIT_TARGETS}; do
+        read -r -a bandit_targets <<< "${BANDIT_TARGETS}"
+        if [[ "${#bandit_targets[@]}" -eq 0 ]]; then
+          echo "::error::bandit-targets is required and must name at least one path."
+          exit 2
+        fi
+        for path in "${bandit_targets[@]}"; do
           if [[ ! -e "${path}" ]]; then
             echo "::error::Bandit target does not exist: ${path}"
             exit 2
@@ -92,10 +101,16 @@ runs:
       env:
         BANDIT_TARGETS: ${{ inputs.bandit-targets }}
         BANDIT_BLOCKING: ${{ inputs.bandit-blocking }}
+        BANDIT_ARGS: ${{ inputs.bandit-args }}
       run: |
         set -euo pipefail
+        read -r -a bandit_targets <<< "${BANDIT_TARGETS}"
+        bandit_args=()
+        if [[ -n "${BANDIT_ARGS}" ]]; then
+          read -r -a bandit_args <<< "${BANDIT_ARGS}"
+        fi
         set +e
-        uv run --frozen --no-sync bandit -r ${BANDIT_TARGETS} -q
+        uv run --frozen --no-sync bandit -r "${bandit_targets[@]}" -q "${bandit_args[@]}"
         status=$?
         set -e
         if [[ "${status}" -ne 0 && "${BANDIT_BLOCKING}" == "true" ]]; then

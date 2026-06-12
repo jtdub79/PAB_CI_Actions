@@ -115,6 +115,136 @@ def test_security_action_requires_bandit_targets_and_pip_audit_blocks():
     assert "bandit -r src" not in json.dumps(data)
 
 
+def job_security_step_script(step_name):
+    data = yaml.safe_load((ACTIONS / "job-security" / "action.yml").read_text())
+    for step in data["runs"]["steps"]:
+        if step.get("name") == step_name:
+            return step["run"]
+    raise AssertionError(f"job-security step not found: {step_name}")
+
+
+def fake_uv_dir(tmp_path, *, exit_status=0):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    script = bindir / "uv"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, pathlib, sys\n"
+        "path = pathlib.Path(os.environ['UV_CAPTURE'])\n"
+        "path.write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n"
+        "raise SystemExit(int(os.environ.get('UV_EXIT_STATUS', '0')))\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    capture = tmp_path / "uv-args.json"
+    env = subprocess_env(
+        PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}",
+        UV_CAPTURE=str(capture),
+        UV_EXIT_STATUS=str(exit_status),
+    )
+    return bindir, capture, env
+
+
+def run_job_security_step(tmp_path, step_name, **env_overrides):
+    script = job_security_step_script(step_name)
+    env = subprocess_env(**env_overrides)
+    return subprocess.run(["bash", "-c", script], cwd=tmp_path, text=True, capture_output=True, env=env)
+
+
+def run_bandit_scan(tmp_path, *, targets="src", bandit_args="", blocking="true", exit_status=0):
+    _bindir, capture, env = fake_uv_dir(tmp_path, exit_status=exit_status)
+    env.update(BANDIT_TARGETS=targets, BANDIT_ARGS=bandit_args, BANDIT_BLOCKING=blocking)
+    result = subprocess.run(
+        ["bash", "-c", job_security_step_script("Bandit security scan")],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+    captured_args = json.loads(capture.read_text(encoding="utf-8")) if capture.exists() else None
+    return result, captured_args
+
+
+def test_security_action_bandit_args_default_empty_and_command_is_safe():
+    data = yaml.safe_load((ACTIONS / "job-security" / "action.yml").read_text())
+    assert data["inputs"]["bandit-args"] == {
+        "description": "Additional arguments passed to Bandit after the recursive targets.",
+        "required": False,
+        "default": "",
+    }
+    script = job_security_step_script("Bandit security scan")
+    assert "eval" not in script
+    assert "bash -c" not in script
+    assert "bandit_args=()" in script
+    assert "${bandit_args[@]}" in script
+    assert "uv run --frozen --no-sync bandit" in script
+
+
+def test_security_action_existing_bandit_behavior_is_preserved_when_args_omitted(tmp_path):
+    (tmp_path / "src").mkdir()
+    result, captured_args = run_bandit_scan(tmp_path, targets="src", bandit_args="", blocking="true")
+    assert result.returncode == 0, result.stderr
+    assert captured_args == ["run", "--frozen", "--no-sync", "bandit", "-r", "src", "-q"]
+
+
+def test_security_action_passes_additional_bandit_args_and_lll_policy(tmp_path):
+    (tmp_path / "src").mkdir()
+    result, captured_args = run_bandit_scan(tmp_path, targets="src", bandit_args="-lll --skip B101", blocking="true")
+    assert result.returncode == 0, result.stderr
+    assert captured_args == ["run", "--frozen", "--no-sync", "bandit", "-r", "src", "-q", "-lll", "--skip", "B101"]
+
+
+def test_security_action_bandit_blocking_mode_propagates_nonzero_exit(tmp_path):
+    (tmp_path / "src").mkdir()
+    result, _captured_args = run_bandit_scan(tmp_path, blocking="true", exit_status=7)
+    assert result.returncode == 7
+    assert "::warning::" not in result.stdout
+
+
+def test_security_action_bandit_nonblocking_mode_warns_and_succeeds(tmp_path):
+    (tmp_path / "src").mkdir()
+    result, _captured_args = run_bandit_scan(tmp_path, blocking="false", exit_status=7)
+    assert result.returncode == 0
+    assert "::warning::Bandit reported findings but bandit-blocking is false." in result.stdout
+
+
+def test_security_action_bandit_args_are_not_executed_through_shell(tmp_path):
+    (tmp_path / "src").mkdir()
+    marker = tmp_path / "pwned"
+    result, captured_args = run_bandit_scan(tmp_path, bandit_args=f"-lll; touch {marker.name}", blocking="true")
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists()
+    assert captured_args == [
+        "run",
+        "--frozen",
+        "--no-sync",
+        "bandit",
+        "-r",
+        "src",
+        "-q",
+        "-lll;",
+        "touch",
+        marker.name,
+    ]
+
+
+def test_security_action_bandit_supports_multiple_targets_and_validation(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    valid = run_job_security_step(
+        tmp_path, "Validate Bandit targets", BANDIT_TARGETS="src tests", GITHUB_RUN_ID="local"
+    )
+    assert valid.returncode == 0, valid.stderr
+
+    result, captured_args = run_bandit_scan(tmp_path, targets="src tests", bandit_args="-lll", blocking="true")
+    assert result.returncode == 0, result.stderr
+    assert captured_args == ["run", "--frozen", "--no-sync", "bandit", "-r", "src", "tests", "-q", "-lll"]
+
+    invalid = run_job_security_step(tmp_path, "Validate Bandit targets", BANDIT_TARGETS="src missing")
+    assert invalid.returncode == 2
+    assert "::error::Bandit target does not exist: missing" in invalid.stdout
+
+
 def load_r2_module():
     import importlib.util
 
