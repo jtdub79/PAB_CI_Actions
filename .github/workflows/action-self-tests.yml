@@ -47,3 +47,20 @@ jobs:
         run: |
           set -euo pipefail
           ! grep -R "PAB_CI_Actions/.github/actions/.*@v[123]" .github/actions
+
+  windows-smoke:
+    name: Windows action smoke tests
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6.0.3
+
+      - name: Exercise local setup-uv
+        uses: ./.github/actions/setup-uv
+        with:
+          python-version: "3.13"
+          sync-args: "--locked --group test"
+
+      - name: Run self-tests
+        shell: pwsh
+        run: uv run --frozen pytest -q
