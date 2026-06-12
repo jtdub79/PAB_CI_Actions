@@ -1,0 +1,48 @@
+name: Verify public object
+description: Download a public object with retries and verify SHA-256 and optional size without making release policy decisions.
+inputs:
+  public-url:
+    description: Public URL to download. The URL is not printed by this action.
+    required: true
+  expected-sha256:
+    description: Expected SHA-256 digest.
+    required: true
+  expected-size:
+    description: Optional expected size in bytes.
+    required: false
+    default: ""
+  retry-count:
+    description: Number of download attempts.
+    required: false
+    default: "3"
+  retry-delay:
+    description: Delay between retries in seconds.
+    required: false
+    default: "2"
+outputs:
+  sha256:
+    description: Verified SHA-256 digest.
+    value: ${{ steps.verify.outputs.sha256 }}
+  size:
+    description: Verified size in bytes.
+    value: ${{ steps.verify.outputs.size }}
+runs:
+  using: composite
+  steps:
+    - name: Verify public object bytes
+      id: verify
+      shell: bash
+      env:
+        PUBLIC_URL: ${{ inputs.public-url }}
+        EXPECTED_SHA256: ${{ inputs.expected-sha256 }}
+        EXPECTED_SIZE: ${{ inputs.expected-size }}
+        RETRY_COUNT: ${{ inputs.retry-count }}
+        RETRY_DELAY: ${{ inputs.retry-delay }}
+      run: |
+        set -euo pipefail
+        python "${GITHUB_ACTION_PATH}/scripts/verify_public_object.py" \
+          --url "${PUBLIC_URL}" \
+          --expected-sha256 "${EXPECTED_SHA256}" \
+          --expected-size "${EXPECTED_SIZE}" \
+          --retry-count "${RETRY_COUNT}" \
+          --retry-delay "${RETRY_DELAY}"

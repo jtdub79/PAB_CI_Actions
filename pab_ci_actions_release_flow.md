@@ -1,326 +1,286 @@
-# PAB_CI_Actions release flow
+# PAB_CI_Actions v4 release flow
 
-This document describes a safe, repeatable release process for your shared GitHub Actions repo
-(`PAB_CI_Actions`) and includes bash scripts you can run for each step.
+This document defines the release process for the `PAB_CI_Actions` v4 line.
 
-## Assumptions
+## Release goals
 
-- Default branch: `main`
-- Actions repo remote: `origin`
-- Current major line: `v1`
-- You will publish:
-  - Immutable semver tags: `v1.2.3` (never moved)
-  - Floating major tag: `v1` (moves forward to latest `v1.x.x`)
-- You develop on `main`, and consuming repos pin to `@v1` (not `@main`).
+The v4 release process must:
 
----
+* validate the action repository before any consumer adopts v4
+* validate consumers against an immutable release-candidate tag
+* never require consumers to reference `main` or the mutable `v4` tag during validation
+* never rewrite immutable semantic-version tags
+* move the floating `v4` tag only after all required consumers pass
+* preserve a clear rollback point
 
-## One-time setup
+## Tag model
 
-### 0. Confirm repo state
+### Release-candidate tags
 
-Run:
+Use immutable prerelease tags while validating the v4 contract:
 
-```bash
-git remote -v
-git status
-git branch --show-current
-```
+* `v4.0.0-rc.1`
+* `v4.0.0-rc.2`
+* later `v4.0.0-rc.N` tags as needed
 
-You should be on `main`, clean working tree.
+Release-candidate tags are immutable. Never move or rewrite them.
 
-### 1. Recommended repository protections (manual)
+Create a new release-candidate tag whenever code changes after a candidate was published.
 
-In GitHub UI for `PAB_CI_Actions`:
+### Final semantic-version tags
 
-- Protect `main`:
-  - Require PRs
-  - Require status checks (your actions self-test workflow)
-- Repo **Settings → Actions → General → Access**:
-  - Allow usage from other repos that need it (org-wide if applicable)
+Use immutable final release tags for validated releases:
 
----
+* `v4.0.0`
+* `v4.0.1`
+* later `v4.x.y` tags
 
-## Day-to-day development flow (main branch)
+Final semantic-version tags are immutable. Never move or rewrite them.
 
-### Step A: Create a feature branch
+### Floating major tag
 
-```bash
-./tools/new-branch.sh feat/my-change
-```
+`v4` is a mutable convenience tag for validated consumers.
 
-**Script: `tools/new-branch.sh`**
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+Move `v4` only after:
 
-branch="${1:-}"
-if [[ -z "${branch}" ]]; then
-  echo "Usage: $0 <branch-name>" >&2
-  exit 2
-fi
+1. the final immutable release tag exists
+2. repository self-tests pass for that exact commit
+3. required consumer validation passes
+4. the release commit is approved for general adoption
 
-git fetch origin
-git checkout main
-git pull --ff-only origin main
-git checkout -b "${branch}"
-git status
-```
+Never use `v4` as the initial validation target.
 
-### Step B: Validate locally (optional but nice)
+## Implementation and validation sequence
 
-Run your local checks (adjust to your repo):
+### 1. Complete the v4 foundation
 
-```bash
-./tools/validate-local.sh
-```
+Implement the v4 action contract on the `workflows` branch.
 
-**Script: `tools/validate-local.sh`**
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+Before opening or updating the pull request, run the complete local validation suite.
 
-# Example: basic YAML sanity + show action metadata
-# Customize as needed.
+Do not create any v4 tag during initial implementation.
 
-echo "==> Checking for action.yml files"
-find . -name "action.yml" -o -name "action.yaml" | sed 's|^| - |'
+### 2. Merge the action repository pull request
 
-echo "==> Optional: run yamllint if installed"
-if command -v yamllint >/dev/null 2>&1; then
-  yamllint .
-else
-  echo "yamllint not installed; skipping."
-fi
+Open and review:
 
-echo "==> Done"
-```
+`workflows -> main`
 
-### Step C: Push branch and open PR
+Merge only after:
+
+* local validation passes
+* GitHub-hosted self-tests pass
+* required review comments are resolved
+* the v4 contract and documentation are internally consistent
+
+### 3. Validate `main`
+
+After merge, run the action self-test workflow on `main`.
+
+Required hosted validation should include:
+
+* Ubuntu self-tests
+* Windows smoke tests for cross-platform actions
+* action metadata validation
+* workflow validation
+* quality checks
+* security checks
+* mocked R2 and metadata-submission behavior
+
+Do not tag a failing or partially validated commit.
+
+### 4. Create the first immutable release candidate
+
+After `main` passes, create:
 
 ```bash
-git push -u origin HEAD
+./dev-tools/tag-semver.sh v4.0.0-rc.1
 ```
 
-Open PR in GitHub. Wait for status checks to pass, then merge.
+Push the immutable tag.
 
----
+Do not create or move the floating `v4` tag yet.
 
-## Release flow (publish tags safely)
+### 5. Validate consumers against the immutable candidate
 
-### Step 1: Update `main` and verify clean working tree
-
-```bash
-./tools/release/prepare-main.sh
-```
-
-**Script: `tools/release/prepare-main.sh`**
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-git fetch origin
-git checkout main
-git pull --ff-only origin main
-
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "Working tree not clean. Commit or stash changes first." >&2
-  git status --porcelain
-  exit 1
-fi
-
-echo "OK: main is up-to-date and clean."
-```
-
-### Step 2: Decide the version number
-
-Choose one:
-
-- Patch: `v1.2.4` (bugfix only)
-- Minor: `v1.3.0` (backward compatible enhancements)
-- Major: `v2.0.0` (breaking)
-
-This doc assumes you are releasing a `v1.x.x`.
-
-### Step 3: Create an immutable semver tag
-
-```bash
-./tools/release/tag-semver.sh v1.3.0
-```
-
-**Script: `tools/release/tag-semver.sh`**
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-tag="${1:-}"
-if [[ -z "${tag}" ]]; then
-  echo "Usage: $0 <tag>  (example: v1.3.0)" >&2
-  exit 2
-fi
-
-# Safety: refuse if tag already exists locally or remotely
-if git rev-parse "${tag}" >/dev/null 2>&1; then
-  echo "Tag already exists locally: ${tag}" >&2
-  exit 1
-fi
-
-git fetch --tags origin
-if git rev-parse "refs/tags/${tag}" >/dev/null 2>&1; then
-  echo "Tag already exists on origin: ${tag}" >&2
-  exit 1
-fi
-
-git tag "${tag}"
-git push origin "${tag}"
-
-echo "Published immutable tag: ${tag}"
-```
-
-### Step 4: Move the floating major tag (`v1`) to the new semver tag
-
-After `v1.3.0` is published and validated:
-
-```bash
-./tools/release/move-major-tag.sh v1 v1.3.0
-```
-
-**Script: `tools/release/move-major-tag.sh`**
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-major_tag="${1:-}"
-target_tag="${2:-}"
-
-if [[ -z "${major_tag}" || -z "${target_tag}" ]]; then
-  echo "Usage: $0 <major-tag> <target-semver-tag>  (example: v1 v1.3.0)" >&2
-  exit 2
-fi
-
-git fetch --tags origin
-
-# Ensure target tag exists
-if ! git rev-parse "refs/tags/${target_tag}" >/dev/null 2>&1; then
-  echo "Target tag not found: ${target_tag}" >&2
-  exit 1
-fi
-
-target_sha="$(git rev-list -n 1 "${target_tag}")"
-echo "Target ${target_tag} -> ${target_sha}"
-
-# Move local tag
-git tag -f "${major_tag}" "${target_tag}"
-
-# Force-push only the major tag
-git push origin -f "${major_tag}"
-
-echo "Moved ${major_tag} to ${target_tag}."
-```
-
-### Step 5: Verify what `v1` points to
-
-```bash
-./tools/release/verify-tags.sh v1 v1.3.0
-```
-
-**Script: `tools/release/verify-tags.sh`**
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-major_tag="${1:-v1}"
-semver_tag="${2:-}"
-
-git fetch --tags origin
-
-echo "==> Local tags"
-git show -s --format="%D%n%H%n%s%n" "${major_tag}"
-if [[ -n "${semver_tag}" ]]; then
-  git show -s --format="%D%n%H%n%s%n" "${semver_tag}"
-fi
-
-echo "==> Remote tag refs"
-git ls-remote --tags origin | grep -E "refs/tags/(${major_tag}|${semver_tag})$" || true
-```
-
----
-
-## Consuming repos update flow
-
-### Step 1: Pin to `@v1` (recommended)
-
-In consuming repos, reference:
-
-- Composite action:
+Consumers must reference the exact release-candidate tag:
 
 ```yaml
-- uses: jtdub79/PAB_CI_Actions/.github/actions/job-lint@v1
+uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v4.0.0-rc.1
 ```
 
-- Reusable workflow:
+Validate consumers in this order:
 
-```yaml
-jobs:
-  ci:
-    uses: jtdub79/PAB_CI_Actions/.github/workflows/python-ci.yml@v1
-```
+1. `PAB-Shared`
+2. `PABLicenseServer`
+3. `PrecisionArrowBuilder` validation workflows
+4. `PrecisionArrowBuilder` production-release mechanics
 
-### Step 2: “Try main” workflow (optional, recommended)
+Each consumer must validate against the same immutable candidate unless a defect requires a new candidate.
 
-Add a workflow_dispatch input that lets you test `main` before moving `v1`.
+### 6. Create a new candidate when fixes are required
 
-Example snippet for a consuming repo:
+If candidate validation finds a defect:
 
-```yaml
-on:
-  workflow_dispatch:
-    inputs:
-      ci_actions_ref:
-        description: "Ref for PAB_CI_Actions"
-        required: true
-        default: "v1"
+1. fix the defect on `workflows`
+2. merge the fix into `main`
+3. rerun the complete self-test suite
+4. create the next immutable candidate
 
-jobs:
-  lint:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: jtdub79/PAB_CI_Actions/.github/actions/job-lint@${{ inputs.ci_actions_ref }}
-        with:
-          python-version: "3.13"
-```
-
----
-
-## Operational rules
-
-1. Consuming repos should use `@v1` (stable), not `@main`.
-2. Only move `v1` after:
-   - Actions repo self-tests are green
-   - (Optionally) you’ve run the consuming repos’ “Try main” workflow dispatch
-3. Never rewrite semver tags (`v1.3.0` stays forever).
-4. Only rewrite floating tags (`v1`, later `v2`).
-
----
-
-## Suggested directory layout for scripts
-
-```
-tools/
-  new-branch.sh
-  validate-local.sh
-  release/
-    prepare-main.sh
-    tag-semver.sh
-    move-major-tag.sh
-    verify-tags.sh
-```
-
-Make scripts executable once:
+Example:
 
 ```bash
-chmod +x tools/*.sh tools/release/*.sh
+./dev-tools/tag-semver.sh v4.0.0-rc.2
 ```
+
+Do not rewrite `v4.0.0-rc.1`.
+
+Update consumer branches to the new exact candidate tag and repeat validation.
+
+### 7. Perform non-production integration tests
+
+Before final v4 publication, validate cloud-facing actions against non-production resources.
+
+At minimum:
+
+* upload a harmless object to a dedicated R2 test bucket or prefix
+* verify public bytes and SHA-256
+* verify same-byte idempotent upload behavior
+* verify conflicting bytes are rejected
+* submit release metadata to a local or staging server
+* verify Basic authentication behavior
+* verify invalid metadata and server failures are handled safely
+
+Do not use production R2 objects or production release metadata for these tests.
+
+### 8. Create the final immutable release
+
+After the latest release candidate passes all required validation, create the final release tag:
+
+```bash
+./dev-tools/tag-semver.sh v4.0.0
+```
+
+The final tag must point to the exact validated commit.
+
+Verify the tag before promoting the floating major.
+
+### 9. Move the floating major tag
+
+After `v4.0.0` is verified and approved:
+
+```bash
+./dev-tools/move-major-tag.sh v4 v4.0.0
+./dev-tools/verify-tags.sh v4 v4.0.0
+```
+
+Only after this step should general consumer documentation recommend:
+
+```yaml
+uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v4
+```
+
+Consumers that require maximum reproducibility may remain pinned to an immutable semantic-version tag.
+
+## Validation gates before `v4` promotion
+
+All of the following must pass before moving `v4`:
+
+* action repository Ubuntu self-tests
+* action repository Windows smoke tests
+* action metadata and workflow validation
+* quality and security checks
+* mocked R2 upload tests
+* mocked public-object verification tests
+* mocked metadata-submission tests
+* non-production R2 integration test
+* non-production metadata-submission integration test
+* `PAB-Shared` consumer validation
+* `PABLicenseServer` consumer validation
+* `PrecisionArrowBuilder` validation-workflow adoption
+* `PrecisionArrowBuilder` release-mechanic validation
+* documentation review
+* confirmation that no consumer still depends on an unintended v2 or v3 internal reference
+
+## Rollback
+
+### Floating-major rollback
+
+If a defect is discovered after moving `v4`, move `v4` back to the most recent validated immutable v4 release.
+
+Example:
+
+```bash
+./dev-tools/move-major-tag.sh v4 v4.0.0
+./dev-tools/verify-tags.sh v4 v4.0.0
+```
+
+Never rewrite or delete the defective immutable release tag merely to hide it.
+
+### Consumer rollback
+
+Consumers pinned to an immutable release should revert to the previous known-good immutable tag.
+
+Consumers using `v4` will follow the floating-major rollback after their next checkout.
+
+### Follow-up release
+
+Fix the defect and publish a new immutable patch release:
+
+```bash
+./dev-tools/tag-semver.sh v4.0.1
+./dev-tools/move-major-tag.sh v4 v4.0.1
+./dev-tools/verify-tags.sh v4 v4.0.1
+```
+
+Do not reuse `v4.0.0`.
+
+## Helper scripts
+
+The `dev-tools` scripts are low-level tag helpers. They do not replace the validation gates in this document.
+
+Use them only after the applicable gates are satisfied.
+
+Examples:
+
+```bash
+# Create an immutable release candidate.
+./dev-tools/tag-semver.sh v4.0.0-rc.1
+
+# Create the final immutable release.
+./dev-tools/tag-semver.sh v4.0.0
+
+# Promote the floating major after final validation.
+./dev-tools/move-major-tag.sh v4 v4.0.0
+
+# Verify the floating major points to the intended immutable release.
+./dev-tools/verify-tags.sh v4 v4.0.0
+```
+
+Before using these scripts, confirm they accept prerelease semantic versions such as `v4.0.0-rc.1`. If they do not, update and test the scripts before creating the first release candidate.
+
+## Older major lines
+
+`v1`, `v2`, and `v3` remain available for existing consumers.
+
+After v4 is published:
+
+* new development should target v4
+* older majors are deprecated
+* older immutable tags remain available
+* older floating-major tags must not be repointed to v4
+* fixes to older majors should be limited to justified compatibility or security work
+
+## Prohibited release actions
+
+Do not:
+
+* use `v4.0.0` as a prerelease candidate
+* validate consumers against `main`
+* move `v4` before consumer validation completes
+* rewrite an immutable release-candidate tag
+* rewrite an immutable final semantic-version tag
+* publish a new candidate without rerunning repository self-tests
+* skip non-production integration testing for cloud-facing actions
+* promote a release with unresolved security or credential-handling defects
+  ::: 

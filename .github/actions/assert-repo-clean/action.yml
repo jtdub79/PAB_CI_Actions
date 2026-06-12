@@ -1,15 +1,31 @@
 name: Assert repository is clean
-description: Fail if git status indicates changes.
+description: Fail when tracked files changed; optionally report untracked files without mutating the repository.
+inputs:
+  check-untracked:
+    description: Set true to fail on untracked files. Default documents but permits generated untracked files.
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
-    - name: Assert repo is clean after install
+    - name: Assert repository cleanliness
       shell: bash
+      env:
+        CHECK_UNTRACKED: ${{ inputs.check-untracked }}
       run: |
-        if [[ -n "$(git status --porcelain)" ]]; then
-          echo "Repo became dirty during CI (e.g. uv.lock changed). Diff:"
-          git --no-pager diff
-          echo "Status:"
-          git status --porcelain
+        set -euo pipefail
+        tracked_changes="$(git status --porcelain=v1 --untracked-files=no)"
+        if [[ -n "${tracked_changes}" ]]; then
+          echo "::error::Tracked files changed unexpectedly. Changed paths:"
+          git status --porcelain=v1 --untracked-files=no | sed 's/^/  /'
           exit 1
         fi
+        if [[ "${CHECK_UNTRACKED}" == "true" ]]; then
+          untracked="$(git ls-files --others --exclude-standard)"
+          if [[ -n "${untracked}" ]]; then
+            echo "::error::Untracked files are present:"
+            printf '%s\n' "${untracked}" | sed 's/^/  ?? /'
+            exit 1
+          fi
+        fi
+        echo "Repository tracked files are clean."
