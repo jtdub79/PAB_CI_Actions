@@ -1,2 +1,8 @@
 # IDE / Editors
 .idea/
+
+# Local Python environments and test artifacts
+.venv/
+.pytest_cache/
+__pycache__/
+pab-release-metadata-response-*.txt

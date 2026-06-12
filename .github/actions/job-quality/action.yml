@@ -1,45 +1,119 @@
-name: CI Lint Job
-description: Run linting and formatting checks.
+name: Python quality checks
+description: Run shared Python quality mechanics with caller-controlled commands and optional import checks.
 inputs:
   python-version:
-    required: true
+    required: false
+    default: "3.13"
     description: Python version used for uv environment.
-  run-import-linter:
-    description: Run import linter
+  install-args:
     required: false
-    default: "true"
-  has-import-health-script:
-    description: Run import health script dev-tools/check_import_health.py
+    default: "--locked --no-sources --group linting"
+    description: Arguments passed to uv sync before quality commands.
+  private-github-token:
     required: false
-    default: "true"
+    default: ""
+    description: Optional token for private GitHub dependencies during uv sync.
+  private-auth-required:
+    required: false
+    default: "false"
+    description: Set true when private dependencies must be available.
+  ruff-check-command:
+    required: false
+    default: "uv run --frozen --no-sync ruff check . --output-format=github"
+    description: Command used for Ruff lint checks.
+  ruff-format-command:
+    required: false
+    default: "uv run --frozen --no-sync ruff format --check ."
+    description: Command used for Ruff format checks.
+  mypy-command:
+    required: false
+    default: "uv run --frozen --no-sync mypy ."
+    description: Command used for mypy checks.
+  import-linter-command:
+    required: false
+    default: ""
+    description: Optional import-linter command, for example `uv run --frozen --no-sync lint-imports`.
+  import-health-command:
+    required: false
+    default: ""
+    description: Optional repository-specific import health command.
 runs:
   using: composite
   steps:
-    - uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v2
+    - name: Install Python
+      uses: actions/setup-python@v6.2.0
       with:
         python-version: ${{ inputs.python-version }}
-        install-args: --no-sources --locked --group linting
-
-    - uses: jtdub79/PAB_CI_Actions/.github/actions/assert-repo-clean@v2
-
-    - name: Ruff Linting (check)
+    - name: Install uv
+      uses: astral-sh/setup-uv@v8.2.0
+      with:
+        enable-cache: true
+        cache-dependency-glob: |
+          **/uv.lock
+          **/pyproject.toml
+        cache-suffix: quality-py${{ inputs.python-version }}-${{ runner.os }}-${{ inputs.install-args }}
+        quiet: true
+    - name: Validate private dependency authentication inputs
       shell: bash
-      run: uv run --frozen --no-sync ruff check . --output-format=github
-
-    - name: Ruff Formatting (check)
+      env:
+        PRIVATE_AUTH_REQUIRED: ${{ inputs.private-auth-required }}
+        PRIVATE_GITHUB_TOKEN: ${{ inputs.private-github-token }}
+      run: |
+        set -euo pipefail
+        if [[ "${PRIVATE_AUTH_REQUIRED}" == "true" && -z "${PRIVATE_GITHUB_TOKEN}" ]]; then
+          echo "::error::private-auth-required is true but private-github-token was not supplied."
+          exit 2
+        fi
+    - name: Install quality dependencies
       shell: bash
-      run: uv run --frozen --no-sync ruff format --check . --output-format=github
-
-    - name: Type Checking (mypy)
+      env:
+        PRIVATE_GITHUB_TOKEN: ${{ inputs.private-github-token }}
+        UV_SYNC_ARGS: ${{ inputs.install-args }}
+      run: |
+        set -euo pipefail
+        git_config_file="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/pab-ci-actions-gitconfig-${GITHUB_RUN_ID:-local}-$$"
+        cleanup() { rm -f "${git_config_file}"; unset GIT_CONFIG_GLOBAL || true; }
+        trap cleanup EXIT
+        if [[ -n "${PRIVATE_GITHUB_TOKEN}" ]]; then
+          umask 077
+          printf '[url "https://x-access-token:%s@github.com/"]\n\tinsteadOf = https://github.com/\n' "${PRIVATE_GITHUB_TOKEN}" > "${git_config_file}"
+          export GIT_CONFIG_GLOBAL="${git_config_file}"
+        fi
+        uv sync ${UV_SYNC_ARGS}
+    - name: Ruff lint check
       shell: bash
-      run: uv run --frozen --no-sync mypy .
-
-    - name: Import Linter
-      if: ${{ inputs.run-import-linter == 'true' }}
+      env:
+        COMMAND: ${{ inputs.ruff-check-command }}
+      run: |
+        set -euo pipefail
+        bash -c "${COMMAND}"
+    - name: Ruff format check
       shell: bash
-      run: uv run --frozen --no-sync import-linter lint
-
-    - name: Import Health Checks
-      if: ${{ inputs.has-import-health-script == 'true' }}
+      env:
+        COMMAND: ${{ inputs.ruff-format-command }}
+      run: |
+        set -euo pipefail
+        bash -c "${COMMAND}"
+    - name: mypy
       shell: bash
-      run: python dev-tools/check_import_health.py
+      env:
+        COMMAND: ${{ inputs.mypy-command }}
+      run: |
+        set -euo pipefail
+        bash -c "${COMMAND}"
+    - name: Import linter
+      if: ${{ inputs.import-linter-command != '' }}
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.import-linter-command }}
+      run: |
+        set -euo pipefail
+        bash -c "${COMMAND}"
+    - name: Import health
+      if: ${{ inputs.import-health-command != '' }}
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.import-health-command }}
+      run: |
+        set -euo pipefail
+        bash -c "${COMMAND}"

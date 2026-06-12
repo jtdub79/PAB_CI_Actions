@@ -1,0 +1,84 @@
+name: Upload immutable Cloudflare R2 object
+description: Upload one file to Cloudflare R2 using S3-compatible auth, verifying SHA-256 idempotency before any write.
+inputs:
+  cloudflare-account-id:
+    description: Cloudflare account ID used in the R2 endpoint.
+    required: true
+  bucket:
+    description: R2 bucket name.
+    required: true
+  object-key:
+    description: Immutable object key to create or verify.
+    required: true
+  file:
+    description: Local file path to upload. Directories are rejected.
+    required: true
+  content-type:
+    description: Content-Type header for new uploads.
+    required: true
+  cache-control:
+    description: Cache-Control header for new uploads.
+    required: true
+  content-disposition:
+    description: Optional Content-Disposition header for new uploads.
+    required: false
+    default: ""
+  expected-sha256:
+    description: Optional expected SHA-256 for the local file.
+    required: false
+    default: ""
+  custom-metadata:
+    description: Optional JSON object of non-secret custom metadata.
+    required: false
+    default: ""
+  r2-access-key-id:
+    description: R2 S3 access key ID.
+    required: true
+  r2-secret-access-key:
+    description: R2 S3 secret access key.
+    required: true
+outputs:
+  object-key:
+    description: Verified object key.
+    value: ${{ steps.upload.outputs.object-key }}
+  sha256:
+    description: Local SHA-256 digest.
+    value: ${{ steps.upload.outputs.sha256 }}
+  size:
+    description: Local object size in bytes.
+    value: ${{ steps.upload.outputs.size }}
+  action:
+    description: uploaded when created, exists when idempotent.
+    value: ${{ steps.upload.outputs.action }}
+runs:
+  using: composite
+  steps:
+    - name: Upload or verify immutable R2 object
+      id: upload
+      shell: bash
+      env:
+        ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
+        BUCKET: ${{ inputs.bucket }}
+        OBJECT_KEY: ${{ inputs.object-key }}
+        FILE_PATH: ${{ inputs.file }}
+        CONTENT_TYPE: ${{ inputs.content-type }}
+        CACHE_CONTROL: ${{ inputs.cache-control }}
+        CONTENT_DISPOSITION: ${{ inputs.content-disposition }}
+        EXPECTED_SHA256: ${{ inputs.expected-sha256 }}
+        CUSTOM_METADATA: ${{ inputs.custom-metadata }}
+        R2_ACCESS_KEY_ID: ${{ inputs.r2-access-key-id }}
+        R2_SECRET_ACCESS_KEY: ${{ inputs.r2-secret-access-key }}
+      run: |
+        set -euo pipefail
+        python "${GITHUB_ACTION_PATH}/scripts/r2_upload_object.py" \
+          --account-id "${ACCOUNT_ID}" \
+          --bucket "${BUCKET}" \
+          --object-key "${OBJECT_KEY}" \
+          --file "${FILE_PATH}" \
+          --content-type "${CONTENT_TYPE}" \
+          --cache-control "${CACHE_CONTROL}" \
+          --content-disposition "${CONTENT_DISPOSITION}" \
+          --expected-sha256 "${EXPECTED_SHA256}" \
+          --custom-metadata "${CUSTOM_METADATA}" \
+          --access-key-id "${R2_ACCESS_KEY_ID}" \
+          --secret-access-key "${R2_SECRET_ACCESS_KEY}"
