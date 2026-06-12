@@ -1,38 +1,110 @@
 name: Setup uv environment
-description: Set up uv, cache, create venv, and optionally install dependency groups.
+description: Install Python and uv, optionally synchronize locked dependencies, and clean up temporary private Git authentication.
 inputs:
   python-version:
-    description: Python version for uv environment.
-    required: true
-  cache-key-suffix:
-    description: Optional suffix for cache key.
+    description: Python version to install and use.
+    required: false
+    default: "3.13"
+  uv-version:
+    description: uv version specifier passed to astral-sh/setup-uv. Defaults to the latest stable setup action behavior.
     required: false
     default: ""
-  install-args:
-    description: Arguments passed to `uv sync`.
+  cache-enabled:
+    description: Enable astral-sh/setup-uv built-in cache support.
     required: false
-    default: --no-sources --locked
+    default: "true"
+  cache-dependency-glob:
+    description: Glob used by setup-uv to invalidate the uv cache.
+    required: false
+    default: |
+      **/uv.lock
+      **/pyproject.toml
+  cache-suffix:
+    description: Additional cache salt for dependency groups or install argument changes.
+    required: false
+    default: ""
+  install-dependencies:
+    description: Run uv sync after installing uv.
+    required: false
+    default: "true"
+  sync-args:
+    description: Arguments passed to uv sync. Include dependency groups here.
+    required: false
+    default: "--locked --no-sources"
+  private-github-token:
+    description: Optional token used only during uv sync for private GitHub dependencies.
+    required: false
+    default: ""
+  private-auth-required:
+    description: Set true to fail before sync when private-github-token is missing.
+    required: false
+    default: "false"
+outputs:
+  python-version:
+    description: Python version requested by the caller.
+    value: ${{ inputs.python-version }}
+  cache-suffix:
+    description: Caller-provided cache salt.
+    value: ${{ inputs.cache-suffix }}
 runs:
   using: composite
   steps:
-    - uses: astral-sh/setup-uv@v8.1.0
+    - name: Install Python
+      uses: actions/setup-python@v6.2.0
       with:
         python-version: ${{ inputs.python-version }}
 
-    - name: Cache uv
-      uses: actions/cache@v5
+    - name: Install uv
+      if: ${{ inputs.uv-version == '' }}
+      uses: astral-sh/setup-uv@v8.2.0
       with:
-        path: ~/.cache/uv
-        key: ${{ runner.os }}-uv${{ inputs.cache-key-suffix != '' && format('-{0}', inputs.cache-key-suffix) || '' }}-${{ hashFiles('**/uv.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-uv${{ inputs.cache-key-suffix != '' && format('-{0}', inputs.cache-key-suffix) || '' }}-
-          ${{ runner.os }}-uv-
+        enable-cache: ${{ inputs.cache-enabled }}
+        cache-dependency-glob: ${{ inputs.cache-dependency-glob }}
+        cache-suffix: py${{ inputs.python-version }}-${{ runner.os }}-${{ inputs.cache-suffix }}-${{ inputs.sync-args }}
+        quiet: true
 
-    - name: Create venv
-      shell: bash
-      run: uv venv --python "${{ inputs.python-version }}"
+    - name: Install pinned uv
+      if: ${{ inputs.uv-version != '' }}
+      uses: astral-sh/setup-uv@v8.2.0
+      with:
+        version: ${{ inputs.uv-version }}
+        enable-cache: ${{ inputs.cache-enabled }}
+        cache-dependency-glob: ${{ inputs.cache-dependency-glob }}
+        cache-suffix: py${{ inputs.python-version }}-${{ runner.os }}-${{ inputs.cache-suffix }}-${{ inputs.sync-args }}
+        quiet: true
 
-    - name: Install deps
-      if: inputs.install-args != ''
+    - name: Validate private dependency authentication inputs
       shell: bash
-      run: git config --global url."https://${PAB_SHARED_CORE_GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/" && uv sync ${{ inputs.install-args }}
+      env:
+        PRIVATE_AUTH_REQUIRED: ${{ inputs.private-auth-required }}
+        PRIVATE_GITHUB_TOKEN: ${{ inputs.private-github-token }}
+      run: |
+        set -euo pipefail
+        if [[ "${PRIVATE_AUTH_REQUIRED}" == "true" && -z "${PRIVATE_GITHUB_TOKEN}" ]]; then
+          echo "::error::private-auth-required is true but private-github-token was not supplied."
+          exit 2
+        fi
+
+    - name: Synchronize locked dependencies
+      if: ${{ inputs.install-dependencies == 'true' && inputs.sync-args != '' }}
+      shell: bash
+      env:
+        PRIVATE_GITHUB_TOKEN: ${{ inputs.private-github-token }}
+        UV_SYNC_ARGS: ${{ inputs.sync-args }}
+      run: |
+        set -euo pipefail
+        git_config_file="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/pab-ci-actions-gitconfig-${GITHUB_RUN_ID:-local}-$$"
+        cleanup() {
+          rm -f "${git_config_file}"
+          unset GIT_CONFIG_GLOBAL || true
+        }
+        trap cleanup EXIT
+
+        if [[ -n "${PRIVATE_GITHUB_TOKEN}" ]]; then
+          umask 077
+          printf '[url "https://x-access-token:%s@github.com/"]\n\tinsteadOf = https://github.com/\n' "${PRIVATE_GITHUB_TOKEN}" > "${git_config_file}"
+          export GIT_CONFIG_GLOBAL="${git_config_file}"
+        fi
+
+        # Intentionally unquoted so callers can pass normal uv sync flags/groups.
+        uv sync ${UV_SYNC_ARGS}

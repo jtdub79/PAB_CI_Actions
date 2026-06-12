@@ -1,27 +1,113 @@
-name: CI Security Job
-description: Run Bandit and pip-audit checks.
+name: Python security checks
+description: Run Bandit and pip-audit with explicit targets, blocking policy, and dependency setup.
 inputs:
   python-version:
-    description: Python version to use
+    description: Python version to use.
     required: false
     default: "3.13"
+  install-args:
+    description: Arguments passed to uv sync before security commands.
+    required: false
+    default: "--locked --no-sources --group security"
+  bandit-targets:
+    description: Space-separated paths passed to bandit -r. Required; no src default is assumed.
+    required: true
+  bandit-blocking:
+    description: Set true to fail the action on Bandit findings.
+    required: false
+    default: "false"
+  pip-audit-command:
+    description: pip-audit command. Blocking by default.
+    required: false
+    default: "uv run --frozen --no-sync pip-audit"
+  private-github-token:
+    description: Optional token for private GitHub dependencies during uv sync.
+    required: false
+    default: ""
+  private-auth-required:
+    description: Set true when private dependencies must be available.
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
-    - uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v2
+    - name: Install Python
+      uses: actions/setup-python@v6.2.0
       with:
         python-version: ${{ inputs.python-version }}
-        cache-key-suffix: security
-        install-args: --no-sources --locked --group security
-
-    - uses: jtdub79/PAB_CI_Actions/.github/actions/assert-repo-clean@v2
-
-    - name: Run Bandit security scan (informational)
+    - name: Install uv
+      uses: astral-sh/setup-uv@v8.2.0
+      with:
+        enable-cache: true
+        cache-dependency-glob: |
+          **/uv.lock
+          **/pyproject.toml
+        cache-suffix: security-py${{ inputs.python-version }}-${{ runner.os }}-${{ inputs.install-args }}
+        quiet: true
+    - name: Validate private dependency authentication inputs
       shell: bash
-      continue-on-error: true
-      run: uv run --frozen --no-sync bandit -r src -q
-
-    - name: Run pip-audit vulnerability scan (strict)
+      env:
+        PRIVATE_AUTH_REQUIRED: ${{ inputs.private-auth-required }}
+        PRIVATE_GITHUB_TOKEN: ${{ inputs.private-github-token }}
+      run: |
+        set -euo pipefail
+        if [[ "${PRIVATE_AUTH_REQUIRED}" == "true" && -z "${PRIVATE_GITHUB_TOKEN}" ]]; then
+          echo "::error::private-auth-required is true but private-github-token was not supplied."
+          exit 2
+        fi
+    - name: Install security dependencies
       shell: bash
-      run: uv run --frozen --no-sync pip-audit
-
+      env:
+        UV_SYNC_ARGS: ${{ inputs.install-args }}
+        PRIVATE_GITHUB_TOKEN: ${{ inputs.private-github-token }}
+      run: |
+        set -euo pipefail
+        git_config_file="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/pab-ci-actions-gitconfig-${GITHUB_RUN_ID:-local}-$$"
+        cleanup() { rm -f "${git_config_file}"; unset GIT_CONFIG_GLOBAL || true; }
+        trap cleanup EXIT
+        if [[ -n "${PRIVATE_GITHUB_TOKEN}" ]]; then
+          umask 077
+          printf '[url "https://x-access-token:%s@github.com/"]\n\tinsteadOf = https://github.com/\n' "${PRIVATE_GITHUB_TOKEN}" > "${git_config_file}"
+          export GIT_CONFIG_GLOBAL="${git_config_file}"
+        fi
+        uv sync ${UV_SYNC_ARGS}
+    - name: Validate Bandit targets
+      shell: bash
+      env:
+        BANDIT_TARGETS: ${{ inputs.bandit-targets }}
+      run: |
+        set -euo pipefail
+        if [[ -z "${BANDIT_TARGETS}" ]]; then
+          echo "::error::bandit-targets is required and must name at least one path."
+          exit 2
+        fi
+        for path in ${BANDIT_TARGETS}; do
+          if [[ ! -e "${path}" ]]; then
+            echo "::error::Bandit target does not exist: ${path}"
+            exit 2
+          fi
+        done
+    - name: Bandit security scan
+      shell: bash
+      env:
+        BANDIT_TARGETS: ${{ inputs.bandit-targets }}
+        BANDIT_BLOCKING: ${{ inputs.bandit-blocking }}
+      run: |
+        set -euo pipefail
+        set +e
+        uv run --frozen --no-sync bandit -r ${BANDIT_TARGETS} -q
+        status=$?
+        set -e
+        if [[ "${status}" -ne 0 && "${BANDIT_BLOCKING}" == "true" ]]; then
+          exit "${status}"
+        fi
+        if [[ "${status}" -ne 0 ]]; then
+          echo "::warning::Bandit reported findings but bandit-blocking is false."
+        fi
+    - name: pip-audit vulnerability scan
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.pip-audit-command }}
+      run: |
+        set -euo pipefail
+        bash -c "${COMMAND}"
