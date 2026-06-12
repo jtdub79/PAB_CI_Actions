@@ -38,7 +38,9 @@ jobs:
       - name: Assert missing-token failure was safe
         run: test "${{ steps.missing_private_token.outcome }}" = "failure"
       - name: Validate YAML syntax
-        run: ruby -e 'ARGV.each { |f| require "psych"; Psych.load_file(f); puts "ok #{f}" }' $(find .github -name '*.yml' -o -name '*.yaml')
+        run: |
+          ruby -e 'ARGV.each { |f| require "psych"; Psych.load_file(f); puts "ok " + f }' \
+            $(find .github \( -name '*.yml' -o -name '*.yaml' \) -print)
       - name: Run self-tests
         run: uv run --frozen pytest -q
       - name: Verify no v4 implementation uses stale internal majors
