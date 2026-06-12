@@ -1,0 +1,90 @@
+name: R2 integration test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  r2-integration:
+    runs-on: ubuntu-latest
+    environment: integration-test
+
+    env:
+      OBJECT_KEY: ci/pab-ci-actions/v4/r2-integration.txt
+
+    steps:
+      - uses: actions/checkout@v6.0.3
+
+      - name: Create deterministic test object
+        shell: bash
+        run: printf 'PAB CI Actions R2 integration test\n' > r2-test.txt
+
+      - name: Calculate SHA-256
+        id: digest
+        shell: bash
+        run: echo "sha256=$(sha256sum r2-test.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload test object
+        id: first_upload
+        uses: ./.github/actions/r2-upload-object
+        with:
+          cloudflare-account-id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          bucket: ${{ vars.R2_BUCKET }}
+          object-key: ${{ env.OBJECT_KEY }}
+          file: r2-test.txt
+          content-type: text/plain
+          cache-control: no-store
+          expected-sha256: ${{ steps.digest.outputs.sha256 }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+
+      - name: Verify public bytes
+        uses: ./.github/actions/verify-public-object
+        with:
+          public-url: ${{ vars.R2_PUBLIC_BASE_URL }}/${{ env.OBJECT_KEY }}
+          expected-sha256: ${{ steps.digest.outputs.sha256 }}
+          expected-size: "35"
+          retry-count: "5"
+          retry-delay: "5"
+
+      - name: Verify same-byte idempotency
+        id: second_upload
+        uses: ./.github/actions/r2-upload-object
+        with:
+          cloudflare-account-id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          bucket: ${{ vars.R2_BUCKET }}
+          object-key: ${{ env.OBJECT_KEY }}
+          file: r2-test.txt
+          content-type: text/plain
+          cache-control: no-store
+          expected-sha256: ${{ steps.digest.outputs.sha256 }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+
+      - name: Assert idempotent result
+        shell: bash
+        run: test "${{ steps.second_upload.outputs.action }}" = "exists"
+
+      - name: Create conflicting bytes
+        shell: bash
+        run: printf 'different bytes\n' > r2-conflict.txt
+
+      - name: Verify conflicting upload fails
+        id: conflict
+        continue-on-error: true
+        uses: ./.github/actions/r2-upload-object
+        with:
+          cloudflare-account-id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          bucket: ${{ vars.R2_BUCKET }}
+          object-key: ${{ env.OBJECT_KEY }}
+          file: r2-conflict.txt
+          content-type: text/plain
+          cache-control: no-store
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+
+      - name: Assert conflict was rejected
+        shell: bash
+        run: test "${{ steps.conflict.outcome }}" = "failure"
