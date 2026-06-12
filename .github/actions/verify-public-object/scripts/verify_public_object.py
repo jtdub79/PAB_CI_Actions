@@ -33,6 +33,27 @@ def digest(path: pathlib.Path) -> str:
     return h.hexdigest()
 
 
+def temporary_download_path() -> pathlib.Path:
+    """Create a temporary path and close the mkstemp descriptor for Windows cleanup compatibility."""
+    fd, name = tempfile.mkstemp(prefix="pab-public-object-")
+    os.close(fd)
+    return pathlib.Path(name)
+
+
+def cleanup_temp_file(path: pathlib.Path) -> None:
+    for attempt in range(1, 4):
+        try:
+            path.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError as exc:
+            if attempt == 3:
+                print(f"::warning::could not remove temporary public-object download: {exc}", file=sys.stderr)
+                return
+            time.sleep(0.2)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--url", required=True)
@@ -48,7 +69,7 @@ def main() -> None:
         fail("public-url must be an http(s) URL", 2)
     if len(args.expected_sha256) != 64:
         fail("expected-sha256 must be a hex SHA-256 digest", 2)
-    tmp_path = pathlib.Path(tempfile.mkstemp(prefix="pab-public-object-")[1])
+    tmp_path = temporary_download_path()
     try:
         last = None
         for attempt in range(1, args.retry_count + 1):
@@ -80,10 +101,7 @@ def main() -> None:
         out("size", str(got_size))
         print(f"Verified public object bytes: size={got_size} sha256={got_sha}")
     finally:
-        try:
-            tmp_path.unlink()
-        except FileNotFoundError:
-            pass
+        cleanup_temp_file(tmp_path)
 
 
 if __name__ == "__main__":

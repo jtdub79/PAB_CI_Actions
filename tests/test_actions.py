@@ -180,6 +180,22 @@ def server(handler):
         thread.join()
 
 
+def test_public_verify_temp_path_can_be_removed_on_windows():
+    import importlib.util
+
+    script = ACTIONS / "verify-public-object" / "scripts" / "verify_public_object.py"
+    spec = importlib.util.spec_from_file_location("verify_public_object", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    tmp_path = module.temporary_download_path()
+    try:
+        tmp_path.write_bytes(b"closed descriptor")
+    finally:
+        tmp_path.unlink()
+    assert not tmp_path.exists()
+
+
 def test_public_verify_success_and_mismatch():
     script = ACTIONS / "verify-public-object" / "scripts" / "verify_public_object.py"
     sha = hashlib.sha256(StaticHandler.body).hexdigest()
