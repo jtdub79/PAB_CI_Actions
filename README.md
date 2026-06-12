@@ -93,7 +93,7 @@ The public verification action verifies bytes only. It does not decide whether a
 
 ## Desktop release metadata upsert usage
 
-The metadata action submits a prepared JSON file to `PUT /api/v1/admin/desktop/releases/{platform}/{channel}` using HTTP Basic authentication. It does not construct Precision Arrow Builder-specific metadata and does not use bearer token authentication.
+The metadata action submits a prepared JSON file to `PUT /api/v1/admin/desktop/releases/{platform}/{channel}` using HTTP Basic authentication. Request files may be UTF-8 with or without a BOM. It does not construct Precision Arrow Builder-specific metadata and does not use bearer token authentication. The public `admin-username` and `admin-password` inputs remain unchanged, but the composite action maps them internally to `PAB_SERVER_ADMIN_USER` and `PAB_SERVER_ADMIN_PASSWORD` environment variables so credentials are not passed through process arguments. Self-tests use local mock servers and require no real server credentials.
 
 ```yaml
 - uses: jtdub79/PAB_CI_Actions/.github/actions/upsert-desktop-release-metadata@v4
