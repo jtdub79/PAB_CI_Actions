@@ -46,14 +46,15 @@ Caching uses `astral-sh/setup-uv` built-in cache support instead of a separate b
 
 ## Security action usage
 
-`job-security` does not assume a `src` directory. Callers must provide Bandit target paths. Bandit can be advisory or blocking; pip-audit is blocking by default.
+`job-security` does not assume a `src` directory. Callers must provide Bandit target paths. Bandit can be advisory or blocking; pip-audit is blocking by default. The action owns the execution mechanics (`uv run --frozen --no-sync bandit`, recursive target handling, quiet output, and blocking control), while each consumer owns its repository security policy through optional `bandit-args` such as severity/confidence thresholds, excludes, or skipped checks. Omitting `bandit-args` preserves the original `bandit -r <targets> -q` scan behavior. `bandit-blocking` controls whether a nonzero Bandit result fails the job or is emitted as a warning before continuing.
 
 ```yaml
-- uses: jtdub79/PAB_CI_Actions/.github/actions/job-security@v4
+- uses: jtdub79/PAB_CI_Actions/.github/actions/job-security@v4.0.0-rc.2
   with:
     python-version: "3.13"
     install-args: "--locked --no-sources --group security"
-    bandit-targets: "src tests"
+    bandit-targets: src
+    bandit-args: -lll
     bandit-blocking: "true"
 ```
 
