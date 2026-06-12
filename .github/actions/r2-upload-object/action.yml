@@ -66,10 +66,11 @@ runs:
         CONTENT_DISPOSITION: ${{ inputs.content-disposition }}
         EXPECTED_SHA256: ${{ inputs.expected-sha256 }}
         CUSTOM_METADATA: ${{ inputs.custom-metadata }}
-        R2_ACCESS_KEY_ID: ${{ inputs.r2-access-key-id }}
-        R2_SECRET_ACCESS_KEY: ${{ inputs.r2-secret-access-key }}
+        AWS_ACCESS_KEY_ID: ${{ inputs.r2-access-key-id }}
+        AWS_SECRET_ACCESS_KEY: ${{ inputs.r2-secret-access-key }}
       run: |
         set -euo pipefail
+        python -m pip install --disable-pip-version-check --quiet botocore==1.43.28
         python "${GITHUB_ACTION_PATH}/scripts/r2_upload_object.py" \
           --account-id "${ACCOUNT_ID}" \
           --bucket "${BUCKET}" \
@@ -79,6 +80,4 @@ runs:
           --cache-control "${CACHE_CONTROL}" \
           --content-disposition "${CONTENT_DISPOSITION}" \
           --expected-sha256 "${EXPECTED_SHA256}" \
-          --custom-metadata "${CUSTOM_METADATA}" \
-          --access-key-id "${R2_ACCESS_KEY_ID}" \
-          --secret-access-key "${R2_SECRET_ACCESS_KEY}"
+          --custom-metadata "${CUSTOM_METADATA}"

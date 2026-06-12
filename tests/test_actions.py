@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 
+import pytest
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -92,13 +93,20 @@ def test_security_action_requires_bandit_targets_and_pip_audit_blocks():
     assert "bandit -r src" not in json.dumps(data)
 
 
-def test_r2_validation_endpoint_and_idempotency(tmp_path):
-    f = tmp_path / "artifact.bin"
-    f.write_bytes(b"artifact")
-    state = tmp_path / "state.json"
-    env = os.environ | {"PAB_CI_ACTIONS_R2_MOCK_STATE": str(state)}
+def load_r2_module():
+    import importlib.util
+
     script = ACTIONS / "r2-upload-object" / "scripts" / "r2_upload_object.py"
-    base = [
+    spec = importlib.util.spec_from_file_location("r2_upload_object", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def r2_script_args(file_path, object_key="releases/app.bin", custom_metadata="", content_disposition=""):
+    script = ACTIONS / "r2-upload-object" / "scripts" / "r2_upload_object.py"
+    return [
         sys.executable,
         str(script),
         "--account-id",
@@ -106,54 +114,205 @@ def test_r2_validation_endpoint_and_idempotency(tmp_path):
         "--bucket",
         "bucket",
         "--object-key",
-        "releases/app.bin",
+        object_key,
         "--file",
-        str(f),
+        str(file_path),
         "--content-type",
         "application/octet-stream",
         "--cache-control",
         "public, max-age=31536000, immutable",
-        "--access-key-id",
-        "id",
-        "--secret-access-key",
-        "secret",
+        "--content-disposition",
+        content_disposition,
+        "--custom-metadata",
+        custom_metadata,
     ]
-    first = run(base, env=env)
-    assert first.returncode == 0, first.stderr
-    second = run(base, env=env)
-    assert second.returncode == 0, second.stderr
-    data = json.loads(state.read_text())
-    assert data["bucket"]["releases/app.bin"]["endpoint"] == "https://acct123.r2.cloudflarestorage.com"
-    f.write_bytes(b"different")
-    conflict = run(base, env=env)
-    assert conflict.returncode != 0
 
 
-def test_r2_rejects_directories_and_bad_keys(tmp_path):
-    script = ACTIONS / "r2-upload-object" / "scripts" / "r2_upload_object.py"
-    bad = run(
-        [
-            sys.executable,
-            str(script),
-            "--account-id",
-            "a",
-            "--bucket",
-            "bucket",
-            "--object-key",
-            "../bad",
-            "--file",
-            str(tmp_path),
-            "--content-type",
-            "text/plain",
-            "--cache-control",
-            "no-store",
-            "--access-key-id",
-            "id",
-            "--secret-access-key",
-            "secret",
-        ]
+def r2_env(state, **overrides):
+    env = os.environ | {
+        "PAB_CI_ACTIONS_R2_MOCK_STATE": str(state),
+        "AWS_ACCESS_KEY_ID": "credential-one-for-tests",
+        "AWS_SECRET_ACCESS_KEY": "credential-two-for-tests",
+    }
+    env.update(overrides)
+    return env
+
+
+def test_r2_credentials_are_environment_only():
+    action_text = (ACTIONS / "r2-upload-object" / "action.yml").read_text()
+    script_text = (ACTIONS / "r2-upload-object" / "scripts" / "r2_upload_object.py").read_text()
+    assert "AWS_ACCESS_KEY_ID" in action_text
+    assert "AWS_SECRET_ACCESS_KEY" in action_text
+    removed_access_arg = "--access-key" + "-id"
+    removed_secret_arg = "--secret-access" + "-key"
+    assert removed_access_arg not in action_text
+    assert removed_secret_arg not in action_text
+    assert removed_access_arg not in script_text
+    assert removed_secret_arg not in script_text
+
+
+def test_r2_missing_credentials_fail_safely(tmp_path):
+    f = tmp_path / "artifact.bin"
+    f.write_bytes(b"artifact")
+    state = tmp_path / "state.json"
+    access_missing = run(r2_script_args(f), env=r2_env(state, AWS_ACCESS_KEY_ID=""))
+    secret_missing = run(r2_script_args(f), env=r2_env(state, AWS_SECRET_ACCESS_KEY=""))
+    assert access_missing.returncode != 0
+    assert secret_missing.returncode != 0
+    combined = access_missing.stdout + access_missing.stderr + secret_missing.stdout + secret_missing.stderr
+    assert "credential-one-for-tests" not in combined
+    assert "credential-two-for-tests" not in combined
+    assert "AWS_ACCESS_KEY_ID is required" in combined
+    assert "AWS_SECRET_ACCESS_KEY is required" in combined
+
+
+def test_r2_absent_object_uploads_and_existing_same_bytes_returns_exists(tmp_path):
+    f = tmp_path / "artifact.bin"
+    f.write_bytes(b"artifact")
+    state = tmp_path / "state.json"
+    first = run(
+        r2_script_args(f, content_disposition='attachment; filename="app.bin"', custom_metadata='{"release":"v1"}'),
+        env=r2_env(state),
     )
-    assert bad.returncode != 0
+    assert first.returncode == 0, first.stderr
+    assert "action=uploaded" in first.stdout
+    second = run(
+        r2_script_args(f, content_disposition='attachment; filename="app.bin"', custom_metadata='{"release":"v1"}'),
+        env=r2_env(state),
+    )
+    assert second.returncode == 0, second.stderr
+    assert "action=exists" in second.stdout
+    data = json.loads(state.read_text())
+    stored = data["bucket"]["releases/app.bin"]
+    assert stored["endpoint"] == "https://acct123.r2.cloudflarestorage.com"
+    assert stored["content_type"] == "application/octet-stream"
+    assert stored["cache_control"] == "public, max-age=31536000, immutable"
+    assert stored["content_disposition"] == 'attachment; filename="app.bin"'
+    assert stored["metadata"]["release"] == "v1"
+    assert stored["metadata"]["sha256"] == hashlib.sha256(b"artifact").hexdigest()
+
+
+def test_r2_existing_different_bytes_fails(tmp_path):
+    f = tmp_path / "artifact.bin"
+    f.write_bytes(b"artifact")
+    state = tmp_path / "state.json"
+    assert run(r2_script_args(f), env=r2_env(state)).returncode == 0
+    f.write_bytes(b"different")
+    conflict = run(r2_script_args(f), env=r2_env(state))
+    assert conflict.returncode != 0
+    assert "immutable object already exists" in conflict.stderr
+
+
+def test_r2_rejects_directories_bad_keys_expected_sha_and_bad_metadata(tmp_path):
+    f = tmp_path / "artifact.bin"
+    f.write_bytes(b"artifact")
+    state = tmp_path / "state.json"
+    bad_key = run(r2_script_args(f, object_key="../bad"), env=r2_env(state))
+    directory = run(r2_script_args(tmp_path), env=r2_env(state))
+    expected_sha = run(r2_script_args(f) + ["--expected-sha256", "0" * 64], env=r2_env(state))
+    bad_metadata = run(r2_script_args(f, custom_metadata="[]"), env=r2_env(state))
+    invalid_bucket_args = r2_script_args(f)
+    invalid_bucket_args[invalid_bucket_args.index("--bucket") + 1] = "bad.bucket"
+    invalid_bucket = run(invalid_bucket_args, env=r2_env(state))
+    assert bad_key.returncode != 0
+    assert directory.returncode != 0
+    assert expected_sha.returncode != 0
+    assert bad_metadata.returncode != 0
+    assert invalid_bucket.returncode != 0
+
+
+@pytest.mark.parametrize("reserved_key", ["sha256", "SHA256", "Sha256", "sHa256"])
+def test_r2_rejects_reserved_sha256_custom_metadata(tmp_path, reserved_key):
+    f = tmp_path / "artifact.bin"
+    f.write_bytes(b"artifact")
+    state = tmp_path / "state.json"
+    result = run(r2_script_args(f, custom_metadata=json.dumps({reserved_key: "caller"})), env=r2_env(state))
+    assert result.returncode != 0
+    assert "reserved" in result.stderr
+
+
+class RaceClient:
+    def __init__(self, module, status, head_after):
+        self.module = module
+        self.status = status
+        self.head_after = head_after
+        self.head_calls = 0
+        self.put_kwargs = None
+
+    def head_object(self, **kwargs):
+        self.head_calls += 1
+        if self.head_calls == 1:
+            raise self.module.FakeClientError(404, "NoSuchKey")
+        return self.head_after
+
+    def put_object(self, **kwargs):
+        self.put_kwargs = kwargs
+        raise self.module.FakeClientError(self.status, "PreconditionFailed")
+
+
+def r2_args(**overrides):
+    values = {
+        "bucket": "bucket",
+        "object_key": "folder/app file+v1.bin",
+        "content_type": "application/octet-stream",
+        "cache_control": "public, max-age=31536000, immutable",
+        "content_disposition": "attachment",
+        "custom_metadata": '{"release":"v1"}',
+    }
+    values.update(overrides)
+    return type("Args", (), values)()
+
+
+def test_r2_concurrent_identical_conditional_upload_returns_exists(tmp_path):
+    module = load_r2_module()
+    f = tmp_path / "artifact.bin"
+    payload = b"artifact"
+    f.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    client = RaceClient(module, 412, {"Metadata": {"sha256": digest}, "ContentLength": len(payload)})
+    action = module.upload_or_verify(client, r2_args(), f, digest, len(payload))
+    assert action == "exists"
+    assert client.put_kwargs["IfNoneMatch"] == "*"
+    assert client.put_kwargs["Metadata"]["sha256"] == digest
+    assert client.put_kwargs["ContentType"] == "application/octet-stream"
+    assert client.put_kwargs["CacheControl"] == "public, max-age=31536000, immutable"
+    assert client.put_kwargs["ContentDisposition"] == "attachment"
+    assert client.put_kwargs["Metadata"]["release"] == "v1"
+    assert client.put_kwargs["Key"] == "folder/app file+v1.bin"
+    assert hasattr(client.put_kwargs["Body"], "read")
+    assert client.put_kwargs["Body"].closed
+
+
+def test_r2_concurrent_conflicting_conditional_upload_fails(tmp_path):
+    module = load_r2_module()
+    f = tmp_path / "artifact.bin"
+    payload = b"artifact"
+    f.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    client = RaceClient(module, 409, {"Metadata": {"sha256": "0" * 64}, "ContentLength": len(payload)})
+    with pytest.raises(SystemExit):
+        module.upload_or_verify(client, r2_args(), f, digest, len(payload))
+
+
+def test_r2_unexpected_conditional_put_failure_fails(tmp_path):
+    module = load_r2_module()
+    f = tmp_path / "artifact.bin"
+    payload = b"artifact"
+    f.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    client = RaceClient(module, 500, {"Metadata": {"sha256": digest}, "ContentLength": len(payload)})
+    with pytest.raises(SystemExit):
+        module.upload_or_verify(client, r2_args(), f, digest, len(payload))
+    assert client.head_calls == 1
+
+
+def test_r2_does_not_call_production_without_mock_credentials_or_client(tmp_path):
+    f = tmp_path / "artifact.bin"
+    f.write_bytes(b"artifact")
+    state = tmp_path / "state.json"
+    result = run(r2_script_args(f), env=r2_env(state))
+    assert result.returncode == 0, result.stderr
+    assert state.exists()
 
 
 class StaticHandler(http.server.BaseHTTPRequestHandler):
