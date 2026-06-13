@@ -751,6 +751,7 @@ def test_metadata_submission_credentials_are_environment_only_and_basic_auth(tmp
     assert "metadata-pass" not in result.stdout + result.stderr
     records = github_output_records(output)
     assert records["http-status"] == "200"
+    assert records["outcome"] == "success"
     assert records["platform"] == "windows"
     assert records["channel"] == "stable"
     assert "metadata-user" not in json.dumps(records)
@@ -842,6 +843,26 @@ def test_metadata_submission_transient_retries_and_permanent_failures_do_not_ret
     assert transient_calls == 2
     assert permanent.returncode != 0
     assert permanent_calls == 1
+
+
+def test_metadata_submission_conflict_is_non_retryable_with_machine_readable_outcome(tmp_path):
+    body = tmp_path / "body.json"
+    body.write_text('{"version":"1.0"}', encoding="utf-8")
+    output = tmp_path / "github-output.txt"
+    with server(MetadataHandler) as base_url:
+        MetadataHandler.reset(statuses=[409, 200])
+        result = run(
+            metadata_script_args(body, base_url=base_url.rsplit("/", 1)[0], retry_count="3"),
+            env=metadata_env(GITHUB_OUTPUT=str(output)),
+        )
+
+    assert result.returncode != 0
+    assert MetadataHandler.calls == 1
+    assert "HTTP 409" in result.stderr
+    assert "same-version immutable-field conflict" in result.stderr
+    records = github_output_records(output)
+    assert records["http-status"] == "409"
+    assert records["outcome"] == "conflict"
 
 
 def test_metadata_submission_uses_local_mock_server_only(tmp_path):

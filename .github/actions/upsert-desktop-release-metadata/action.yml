@@ -31,6 +31,9 @@ outputs:
   http-status:
     description: HTTP status returned by the server.
     value: ${{ steps.submit.outputs.http-status }}
+  outcome:
+    description: "Machine-readable submission outcome: success, conflict, or failed."
+    value: ${{ steps.submit.outputs.outcome }}
   platform:
     description: Submitted platform.
     value: ${{ steps.submit.outputs.platform }}

@@ -97,11 +97,21 @@ def main() -> None:
             continue
         break
     response_file.write_bytes(body)
+    outcome = "success" if 200 <= last_status < 300 else "failed"
+    if last_status == 409:
+        outcome = "conflict"
     out("http-status", str(last_status))
+    out("outcome", outcome)
     out("platform", args.platform)
     out("channel", args.channel)
     out("response-file", str(response_file))
     if not (200 <= last_status < 300):
+        if last_status == 409:
+            fail(
+                "metadata upsert conflict (HTTP 409); server rejected a downgrade "
+                "or same-version immutable-field conflict. Sanitized diagnostic "
+                f"retained at {response_file}"
+            )
         fail(f"metadata upsert failed with HTTP {last_status}; sanitized diagnostic retained at {response_file}")
     print(
         f"Metadata upsert succeeded: status={last_status} platform={args.platform} channel={args.channel} response_file={response_file}"
