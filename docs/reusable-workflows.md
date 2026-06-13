@@ -1,30 +1,38 @@
 # Focused reusable workflow evaluation for v4
 
-No reusable workflow is included in the initial v4 foundation pass.
+No reusable workflow was included in the initial v4 foundation release.
 
-The v4 composite actions must first be:
+The validated v4 composite-action foundation is now published under the immutable tag:
 
-1. merged into `main`
-2. validated by hosted Ubuntu and Windows self-tests
-3. published under an immutable release-candidate tag such as `v4.0.0-rc.1`
+```text
+v4.0.0
+```
+
+Current consumers should reference the immutable final tag during adoption:
+
+```yaml
+uses: jtdub79/PAB_CI_Actions/.github/actions/<action-name>@v4.0.0
+```
 
 Consumer validation must not reference:
 
 * `main`
-* the mutable `v4` tag
 * an unpublished tag
+* an obsolete release-candidate tag
+
+The mutable `v4` tag may be used only after it is deliberately promoted to the same validated commit.
 
 ## Why reusable workflows are deferred
 
 Reusable workflows are resolved from the repository and ref named by the caller.
 
-Before an immutable release-candidate tag exists, a consuming repository would have to reference an unstable branch or an unpublished tag. Neither is an acceptable long-term or release-validation contract.
+The initial v4 foundation therefore published and validated the composite actions before evaluating shared job orchestration.
 
-The initial v4 foundation therefore publishes and validates the composite actions first.
+Reusable workflows remain deferred until the cross-repository workflow analysis demonstrates that at least two consumers share a stable job-level contract.
 
 ## Candidate workflow design
 
-After `v4.0.0-rc.1` exists and the action repository self-tests pass, evaluate focused reusable workflows only when the workflow serves at least two consumers.
+Now that `v4.0.0` exists and the action repository self-tests and consumer rehearsals have passed, evaluate focused reusable workflows only when the workflow serves at least two consumers.
 
 Potential candidates are:
 
@@ -38,10 +46,10 @@ Do not create one large reusable workflow controlled by many boolean inputs.
 
 Reusable workflows must use a deterministic action implementation.
 
-During release-candidate validation, any cross-repository action reference must use the exact immutable candidate tag, for example:
+During current consumer adoption, any cross-repository action reference should use the exact immutable final tag, for example:
 
 ```yaml
-uses: jtdub79/PAB_CI_Actions/.github/actions/job-quality@v4.0.0-rc.1
+uses: jtdub79/PAB_CI_Actions/.github/actions/job-quality@v4.0.0
 ```
 
 Do not reference:
@@ -126,33 +134,30 @@ Desktop Qt, headless display, Windows, installer, and release tests do not belon
 
 ## Validation sequence
 
-The reusable-workflow sequence is:
+The reusable-workflow evaluation sequence is now:
 
-1. Publish `v4.0.0-rc.1` containing the validated composite actions.
-2. Pilot composite-action adoption in `PAB-Shared`.
-3. Confirm at least two repositories share a useful job-level contract.
-4. Add focused reusable workflows on the `workflows` branch.
-5. Run action-repository self-tests.
-6. Publish a new immutable candidate such as `v4.0.0-rc.2`.
-7. Validate consuming repositories against that exact candidate.
-8. Include the reusable workflows in final `v4.0.0` only after consumer validation succeeds.
+1. Inventory workflow duplication across all four PAB repositories.
+2. Confirm at least two repositories share a useful, stable job-level contract.
+3. Decide whether each candidate belongs in a composite action, reusable workflow, common Make target contract, or repository-owned workflow.
+4. Implement only the approved focused reusable workflows on a feature branch in `PAB_CI_Actions`.
+5. Run action-repository self-tests on Ubuntu and Windows.
+6. Publish a new immutable semantic-version release containing the reusable workflows.
+7. Validate each consuming repository against that exact immutable release.
+8. Promote the floating `v4` tag only after the new immutable release and required consumers pass.
 
-Never rewrite `v4.0.0-rc.1` to add reusable workflows.
+Never rewrite `v4.0.0` or any release-candidate tag to add reusable workflows.
 
-## Final release behavior
+## Current release behavior
 
-After final consumer validation:
-
-1. create immutable `v4.0.0`
-2. verify it points to the validated commit
-3. move floating `v4` to `v4.0.0`
-4. update general consumer documentation to recommend `@v4`
-
-Consumers requiring maximum reproducibility may remain pinned to:
+The validated composite-action foundation is available at:
 
 ```yaml
 @v4.0.0
 ```
+
+General consumer documentation may recommend `@v4` only after the floating major tag has been deliberately moved to the same validated commit.
+
+Consumers requiring maximum reproducibility should remain pinned to an immutable semantic-version tag such as `@v4.0.0`.
 
 ## Decision rule
 

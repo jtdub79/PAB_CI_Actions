@@ -2,6 +2,27 @@
 
 This document defines the release process for the `PAB_CI_Actions` v4 line.
 
+
+## Current v4 status
+
+The initial v4 release has completed the release-candidate validation path.
+
+The immutable final tag is:
+
+```text
+v4.0.0
+```
+
+It points to the same validated commit as `v4.0.0-rc.2`. Current consumer migrations should use the immutable final tag:
+
+```yaml
+uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v4.0.0
+```
+
+Do not update active consumers from `v4.0.0-rc.2` to the floating `v4` tag as part of the final-tag migration. Promote `v4` separately only after the final tag and all intended consumers are verified.
+
+The release-candidate references below are retained as the historical and future process for validating new major or materially changed action releases.
+
 ## Release goals
 
 The v4 release process must:
@@ -103,10 +124,16 @@ Do not create or move the floating `v4` tag yet.
 
 ### 5. Validate consumers against the immutable candidate
 
-Consumers must reference the exact release-candidate tag:
+During release-candidate validation, consumers must reference the exact candidate tag, for example:
 
 ```yaml
 uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v4.0.0-rc.1
+```
+
+After final promotion, active consumers should migrate from the validated candidate to the exact immutable final release:
+
+```yaml
+uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v4.0.0
 ```
 
 Validate consumers in this order:
