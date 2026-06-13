@@ -5,23 +5,36 @@ This document defines the release process for the `PAB_CI_Actions` v4 line.
 
 ## Current v4 status
 
-The initial v4 release has completed the release-candidate validation path.
+The v4 line is fully released. The floating `v4` tag has been promoted and is
+the recommended consumer reference for ordinary CI.
 
-The immutable final tag is:
+The current immutable release is:
 
 ```text
-v4.0.0
+v4.0.1
 ```
 
-It points to the same validated commit as `v4.0.0-rc.2`. Current consumer migrations should use the immutable final tag:
+Both `v4` and `v4.0.1` point to commit `9d851058`. The previous immutable
+release `v4.0.0` remains available and unchanged at commit `e716a386`.
+
+Ordinary CI consumers should use the floating major:
 
 ```yaml
-uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v4.0.0
+uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v4
 ```
 
-Do not update active consumers from `v4.0.0-rc.2` to the floating `v4` tag as part of the final-tag migration. Promote `v4` separately only after the final tag and all intended consumers are verified.
+Release-critical consumers that require deliberate adoption may pin the
+immutable tag:
 
-The release-candidate references below are retained as the historical and future process for validating new major or materially changed action releases.
+```yaml
+uses: jtdub79/PAB_CI_Actions/.github/actions/r2-upload-object@v4.0.1
+```
+
+or an exact commit SHA. See `docs/versioning-and-pinning-policy.md` for the
+full consumer policy.
+
+The release-candidate references below are retained as the historical and future
+process for validating new major or materially changed action releases.
 
 ## Release goals
 

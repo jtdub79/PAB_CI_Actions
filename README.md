@@ -50,7 +50,7 @@ Caching uses `astral-sh/setup-uv` built-in cache support instead of a separate b
 `job-security` does not assume a `src` directory. Callers must provide Bandit target paths. Bandit can be advisory or blocking; pip-audit is blocking by default. The action owns the execution mechanics (`uv run --frozen --no-sync bandit`, recursive target handling, quiet output, and blocking control), while each consumer owns its repository security policy through optional `bandit-args` such as severity/confidence thresholds, excludes, or skipped checks. Omitting `bandit-args` preserves the original `bandit -r <targets> -q` scan behavior. `bandit-blocking` controls whether a nonzero Bandit result fails the job or is emitted as a warning before continuing.
 
 ```yaml
-- uses: jtdub79/PAB_CI_Actions/.github/actions/job-security@v4.0.0
+- uses: jtdub79/PAB_CI_Actions/.github/actions/job-security@v4.0.1
   with:
     python-version: "3.13"
     install-args: "--locked --no-sources --group security"
@@ -95,9 +95,16 @@ The public verification action verifies bytes only. It does not decide whether a
 
 ## v4 release policy
 
+`v4` is currently promoted and points to the same commit as `v4.0.1`. Ordinary
+CI consumers should use `@v4`. See
+[`docs/versioning-and-pinning-policy.md`](docs/versioning-and-pinning-policy.md)
+for the full consumer pinning policy, the procedure for advancing `v4`, and the
+rollback policy.
+
+Summary:
+
 - Publish immutable semver tags such as `v4.0.0` and `v4.0.1`; never rewrite immutable semver tags.
 - Move the floating `v4` tag only after self-tests pass and consumer validation completes.
-- Required rollout order: PAB-Shared, PABLicenseServer, PrecisionArrowBuilder validation, then PrecisionArrowBuilder production publishing.
 - Rollback by moving the floating `v4` tag back to the last validated immutable `v4.x.y` tag. Do not delete or rewrite semver tags.
 - Older `v1`, `v2`, and `v3` majors remain available for existing consumers but are deprecated for new work after `v4` is published.
 - Do not publish or move any `v4` tag until the self-test workflow succeeds on the immutable candidate tag.

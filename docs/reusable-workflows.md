@@ -2,25 +2,29 @@
 
 No reusable workflow was included in the initial v4 foundation release.
 
-The validated v4 composite-action foundation is now published under the immutable tag:
+The validated v4 composite-action foundation is published at:
 
 ```text
-v4.0.0
+v4.0.1  (immutable)
+v4      (floating — points to the same commit as v4.0.1)
 ```
 
-Current consumers should reference the immutable final tag during adoption:
+Ordinary CI consumers should use the floating major:
 
 ```yaml
-uses: jtdub79/PAB_CI_Actions/.github/actions/<action-name>@v4.0.0
+uses: jtdub79/PAB_CI_Actions/.github/actions/<action-name>@v4
 ```
 
-Consumer validation must not reference:
+Release-critical consumers that require deliberate adoption may pin the immutable
+tag or an exact commit SHA. See `docs/versioning-and-pinning-policy.md` for the
+full consumer pinning policy.
 
-* `main`
-* an unpublished tag
-* an obsolete release-candidate tag
+Consumer references must not use:
 
-The mutable `v4` tag may be used only after it is deliberately promoted to the same validated commit.
+* `@main`
+* `@dev`
+* `@latest`
+* release-candidate refs such as `@v4.0.0-rc.1`
 
 ## Why reusable workflows are deferred
 
@@ -46,22 +50,23 @@ Do not create one large reusable workflow controlled by many boolean inputs.
 
 Reusable workflows must use a deterministic action implementation.
 
-During current consumer adoption, any cross-repository action reference should use the exact immutable final tag, for example:
+Cross-repository action references within reusable workflows should use the
+floating major for ordinary CI use cases:
 
 ```yaml
-uses: jtdub79/PAB_CI_Actions/.github/actions/job-quality@v4.0.0
+uses: jtdub79/PAB_CI_Actions/.github/actions/job-quality@v4
+```
+
+Release-critical references should use an immutable tag or SHA:
+
+```yaml
+uses: jtdub79/PAB_CI_Actions/.github/actions/job-quality@v4.0.1
 ```
 
 Do not reference:
 
 ```yaml
 uses: jtdub79/PAB_CI_Actions/.github/actions/job-quality@main
-```
-
-Do not reference the floating major until final promotion:
-
-```yaml
-uses: jtdub79/PAB_CI_Actions/.github/actions/job-quality@v4
 ```
 
 Before implementing the reusable workflows, verify how same-repository composite-action references behave inside a called workflow. Avoid relative action references that would resolve against the consuming repository rather than `PAB_CI_Actions`.
@@ -151,13 +156,13 @@ Never rewrite `v4.0.0` or any release-candidate tag to add reusable workflows.
 
 The validated composite-action foundation is available at:
 
-```yaml
-@v4.0.0
+```text
+v4.0.1  (immutable)
+v4      (floating — points to the same commit as v4.0.1)
 ```
 
-General consumer documentation may recommend `@v4` only after the floating major tag has been deliberately moved to the same validated commit.
-
-Consumers requiring maximum reproducibility should remain pinned to an immutable semantic-version tag such as `@v4.0.0`.
+Ordinary CI consumers should use `@v4`. Consumers requiring maximum
+reproducibility may pin to the immutable tag `@v4.0.1` or an exact commit SHA.
 
 ## Decision rule
 
