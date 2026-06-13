@@ -2,6 +2,8 @@
 
 `PAB_CI_Actions` owns reusable CI/CD mechanics for the Precision Arrow Builder ecosystem. It does **not** own desktop release policy, version calculation, signing policy, installer creation, production environment selection, or server persistence policy.
 
+Reusable infrastructure primitives belong here; single-consumer product release adapters belong in the product repository that owns the release workflow.
+
 ## Action catalog
 
 | Action | Purpose |
@@ -12,7 +14,6 @@
 | `.github/actions/job-security` | Run Bandit and blocking pip-audit with explicit caller-supplied targets. |
 | `.github/actions/r2-upload-object` | Upload or verify one immutable Cloudflare R2 object using the S3-compatible endpoint. |
 | `.github/actions/verify-public-object` | Download a public object and verify bytes by SHA-256 and optional size. |
-| `.github/actions/upsert-desktop-release-metadata` | PUT a prepared JSON metadata DTO to the existing admin endpoint with HTTP Basic auth. |
 
 ## `setup-uv` secret handling and cache behavior
 
@@ -92,21 +93,6 @@ The public verification action verifies bytes only. It does not decide whether a
     retry-delay: "10"
 ```
 
-## Desktop release metadata upsert usage
-
-The metadata action submits a prepared JSON file to `PUT /api/v1/admin/desktop/releases/{platform}/{channel}` using HTTP Basic authentication. Request files may be UTF-8 with or without a BOM. It does not construct Precision Arrow Builder-specific metadata and does not use bearer token authentication. The public `admin-username` and `admin-password` inputs remain unchanged, but the composite action maps them internally to `PAB_SERVER_ADMIN_USER` and `PAB_SERVER_ADMIN_PASSWORD` environment variables so credentials are not passed through process arguments. Self-tests use local mock servers and require no real server credentials.
-
-```yaml
-- uses: jtdub79/PAB_CI_Actions/.github/actions/upsert-desktop-release-metadata@v4
-  with:
-    server-base-url: ${{ vars.PAB_SERVER_BASE_URL }}
-    platform: windows
-    channel: stable
-    request-json-file: dist/release-metadata.json
-    admin-username: ${{ secrets.PAB_SERVER_ADMIN_USER }}
-    admin-password: ${{ secrets.PAB_SERVER_ADMIN_PASSWORD }}
-```
-
 ## v4 release policy
 
 - Publish immutable semver tags such as `v4.0.0` and `v4.0.1`; never rewrite immutable semver tags.
@@ -121,7 +107,8 @@ The metadata action submits a prepared JSON file to `PUT /api/v1/admin/desktop/r
 - Replace stale internal `@v2`/`@v3` assumptions with direct `@v4` action references after `v4` exists.
 - Pass Python `3.13`; do not introduce Python 3.14.
 - Use `sync-args`/`install-args` for dependency groups instead of repository-specific defaults.
-- Use the R2 and metadata actions only from the repository that owns production release orchestration and production secrets.
+- Use the generic R2 actions only from repositories that own their production release orchestration and production secrets.
+- Keep single-consumer product release adapters, such as PrecisionArrowBuilder desktop metadata publication, in the product repository that owns the workflow and server contract.
 
 ## Local and CI validation
 
