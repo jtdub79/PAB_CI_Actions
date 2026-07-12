@@ -11,7 +11,7 @@ jobs:
     name: Validate action metadata and helper behavior
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6.2.0
         with:
           python-version: "3.13"
@@ -53,7 +53,7 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7
 
       - name: Exercise local setup-uv
         uses: ./.github/actions/setup-uv

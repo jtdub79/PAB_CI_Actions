@@ -15,7 +15,7 @@ jobs:
       OBJECT_KEY: ci/pab-ci-actions/v4/r2-integration.txt
 
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7
 
       - name: Create deterministic test object
         shell: bash

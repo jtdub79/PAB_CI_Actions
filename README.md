@@ -27,7 +27,7 @@ Caching uses `astral-sh/setup-uv` built-in cache support instead of a separate b
 - uses: jtdub79/PAB_CI_Actions/.github/actions/setup-uv@v4
   with:
     python-version: "3.13"
-    sync-args: "--locked --no-sources --group linting"
+    sync-args: "--locked --no-sources --group quality"
     private-auth-required: "true"
     private-github-token: ${{ secrets.PAB_SHARED_CORE_GITHUB_TOKEN }}
 ```
@@ -40,7 +40,7 @@ Caching uses `astral-sh/setup-uv` built-in cache support instead of a separate b
 - uses: jtdub79/PAB_CI_Actions/.github/actions/job-quality@v4
   with:
     python-version: "3.13"
-    install-args: "--locked --no-sources --group linting"
+    install-args: "--locked --no-sources --group quality"
     mypy-command: "uv run --frozen --no-sync mypy src tests"
     import-linter-command: "uv run --frozen --no-sync lint-imports"
 ```
