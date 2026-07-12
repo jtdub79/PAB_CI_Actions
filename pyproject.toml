@@ -1,12 +1,12 @@
 [project]
 name = "pab-ci-actions-self-tests"
-version = "0.0.0"
+version = "4.1.0"
 requires-python = ">=3.13,<3.14"
 dependencies = []
 
 [dependency-groups]
-test = ["pytest>=8.0", "pyyaml>=6.0"]
-quality = ["ruff>=0.11", "mypy>=1.15"]
+test = ["pytest>=9.1", "pyyaml>=6.0"]
+quality = ["ruff>=0.15", "mypy>=2.2", "deptry>=0.25"]
 security = ["bandit>=1.8", "pip-audit>=2.8"]
 
 [tool.ruff]

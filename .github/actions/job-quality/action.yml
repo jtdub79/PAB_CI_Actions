@@ -7,7 +7,7 @@ inputs:
     description: Python version used for uv environment.
   install-args:
     required: false
-    default: "--locked --no-sources --group linting"
+    default: "--locked --no-sources --group quality"
     description: Arguments passed to uv sync before quality commands.
   private-github-token:
     required: false
@@ -17,6 +17,10 @@ inputs:
     required: false
     default: "false"
     description: Set true when private dependencies must be available.
+  dependency-check-command:
+    required: false
+    default: "uv run --frozen --no-sync deptry ."
+    description: Command used for dependency check.
   ruff-check-command:
     required: false
     default: "uv run --frozen --no-sync ruff check . --output-format=github"
@@ -80,6 +84,13 @@ runs:
           export GIT_CONFIG_GLOBAL="${git_config_file}"
         fi
         uv sync ${UV_SYNC_ARGS}
+    - name: Dependency check
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.dependency-check-command }}
+      run: |
+        set -euo pipefail
+        bash -c "${COMMAND}"
     - name: Ruff lint check
       shell: bash
       env:
